@@ -1,7 +1,19 @@
 name = "block_kalman"
 authors = ["Benjamin Cox"]
-[compat]
-julia = "1.7.2"
-DrWatson = "2.9.1"
+
 [deps]
+BlockDiagonals = "0a1fb500-61f7-11e9-3c65-f5ef3456f9f0"
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 DrWatson = "634d3b9d-ee7a-5ddf-bec9-22491ea816e1"
+GraphMakie = "1ecd5474-83a3-4783-bb4f-06765db800d2"
+Graphs = "86223c79-3864-5bf0-83f7-82e725a168b6"
+InvertedIndices = "41ab1584-1d38-5bbf-9106-f11c6c58b48f"
+Kronecker = "2c470bb0-bcc8-11e8-3dad-c9649493f05e"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+NetworkLayout = "46757867-2c16-5918-afeb-47bfcb05e46a"
+SimpleWeightedGraphs = "47aef6b3-ad0c-573a-a1e2-d07658019622"
+
+[compat]
+DrWatson = "2.9.1"
+julia = "1.7.2"
