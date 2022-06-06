@@ -135,16 +135,16 @@ function _Q_func(observations, A′, H, m0, P0, Q, R, _lp)
     K = size(observations, 2)
 
     B .+= observations[:, 1] * rts_means[:, 1]'
-    Σ .+= rts_covs[:, :, 1] + (rts_means[:, 1] * rts_means[:, 1]')
-    Φ .+= rts_z[3] + (rts_z[2] * rts_z[2]')
-    C .+= (rts_covs[:, :, 1] * rts_z[1]') + (rts_means[:, 1] * rts_z[2]')
+    Σ .+= rts_covs[:, :, 1] .+ (rts_means[:, 1] * rts_means[:, 1]')
+    Φ .+= rts_z[3] .+ (rts_z[2] * rts_z[2]')
+    C .+= (rts_covs[:, :, 1] * rts_z[1]') .+ (rts_means[:, 1] * rts_z[2]')
     D .+= observations[:, 1] * observations[:, 1]'
 
     for k = 2:K
         B .+= observations[:, k] * rts_means[:, k]'
         Σ .+= rts_covs[:, :, k] .+ (rts_means[:, k] * rts_means[:, k]')
         Φ .+= rts_covs[:, :, k-1] .+ (rts_means[:, k-1] * rts_means[:, k-1]')
-        C .+= (rts_covs[:, :, k] * rts_G[:, :, k-1]') + (rts_means[:, k] * rts_means[:, k-1]')
+        C .+= (rts_covs[:, :, k] * rts_G[:, :, k-1]') .+ (rts_means[:, k] * rts_means[:, k-1]')
         D .+= observations[:, k] * observations[:, k]'
     end
     B ./= K
@@ -160,6 +160,22 @@ function _Q_func(observations, A′, H, m0, P0, Q, R, _lp)
     return (Qf, _f1, _f2, val_dict)
 end
 
+function _oneshot_A(val_dict)
+    C = val_dict[:C]
+    Φ = val_dict[:Φ]
+    A_map = C / Φ
+    return A_map
+end
+
+function MLEM_A(dimA, steps, Y, H, m0, P, Q, R)
+    A_est = rand(dimA, dimA)
+    for step in 1:steps
+        VD = _Q_func(Y, A_est, H, m0, P, Q, R)
+        A_est = _oneshot_A(VD)
+    end
+    return A_est
+end
+
 function _proxf1(A, θ, K, Q, val_dict)
     C = val_dict[:C]
     Φ = val_dict[:Φ]
@@ -171,8 +187,8 @@ function _proxf1(A, θ, K, Q, val_dict)
     _t1 = id ⊗ (K * Q_inv) .+ (θ * Φ_inv) ⊗ id
     _t2 = vec(K * Q_inv * C * Φ_inv)
     rv = inv(_t1) * _t2
-    rvl = isqrt(length(rv))
-    return reshape(rv, (rvl, rvl))
+    # rvl = isqrt(length(rv))
+    return reshape(rv, size(A))
 end
 
 function _proxf2(A, θ)
@@ -203,10 +219,9 @@ function _DR_opt(f1, f2, proxf1, proxf2, θ, K, Q, val_dict, Z0, ϵ, γ; maxiter
     return A
 end
 
-function graphEM(dimA, steps, Y, H, m0, P, Q, R; γ = 0.1, dense_indices = eachindex(zeros(dimA, dimA)))
+function graphEM(dimA, steps, Y, H, m0, P, Q, R; γ = 0.1, θ = 1.0, dense_indices = eachindex(zeros(dimA, dimA)), init = rand(length(dense_indices)))
     A_gem = zeros(dimA, dimA)
-    A_gem[dense_indices] .= rand(length(dense_indices))
-    θ = 1.0
+    A_gem[dense_indices] .= init
     T = size(Y, 2)
     @inline l1_penalty(A) = γ * norm(A, 1)
     for s = 1:steps
