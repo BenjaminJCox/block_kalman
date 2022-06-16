@@ -118,6 +118,14 @@ function _Q_func(observations, A, H, m0, P0, Q, R)
     return val_dict
 end
 
+function f1_fvd(A, Q, val_dict)
+    Σ = val_dict[:Σ]
+    C = val_dict[:C]
+    Φ = val_dict[:Φ]
+    return 0.5 .* tr(inv(Q) * (Σ - C * A' - A * C' + A * Φ * A'))
+end
+
+
 function _Q_func(observations, A′, H, m0, P0, Q, R, _lp)
     kal = _perform_kalman(observations, A′, H, m0, P0, Q, R)
     rts = _perform_rts(kal, A′, H, Q, R)
@@ -169,7 +177,7 @@ end
 
 function MLEM_A(dimA, steps, Y, H, m0, P, Q, R)
     A_est = rand(dimA, dimA)
-    for step in 1:steps
+    for step = 1:steps
         VD = _Q_func(Y, A_est, H, m0, P, Q, R)
         A_est = _oneshot_A(VD)
     end
@@ -196,7 +204,121 @@ function _proxf2(A, θ)
     return sign.(A) .* maximator
 end
 
-function _DR_opt(f1, f2, proxf1, proxf2, θ, K, Q, val_dict, Z0, ϵ, γ; maxiters = 100, dense_indices = eachindex(Z0))
+function prox_f1(A, Q, ϑ, val_dict)
+    # in new notation C is now Δ, using old for consistency
+    C = val_dict[:C]
+    Φ = val_dict[:Φ]
+    Q_inv = inv(Q)
+    Φ_inv = inv(Φ)
+
+    # id = 1.0 .* Matrix(I(size(Q, 1)))
+    #
+    # _t1 = id ⊗ (ϑ * Q_inv) .+ (Φ_inv) ⊗ id
+    # _t2 = vec(ϑ * Q_inv * C * Φ_inv)
+    #
+    # rv = inv(_t1) * _t2
+    # return reshape(rv, size(A))
+    return sylvester(ϑ .* Q_inv, Φ_inv, A * Φ_inv .+ ϑ .* Q_inv * C * Φ_inv)
+end
+
+function prox_laplace(A, ϑ)
+    return sign.(A) .* max.(abs.(A) .- ϑ, 0.0)
+end
+
+function _laplace(A)
+    return sum(abs.(A))
+end
+
+function prox_gaussian(A, ϑ)
+    return A ./ (1.0 + ϑ)
+end
+
+function _gaussian(A)
+    return 0.5 .* sum(A .^ 2)
+end
+
+function prox_lapgauss(A, ϑ)
+    return sign.(A ./ (1.0 + ϑ)) .* max.(abs.(A ./ (1.0 + ϑ)) .- ϑ / (1.0 + ϑ), 0.0)
+end
+
+function _lapgauss(A)
+    return _laplace(A) + _gaussian(A)
+end
+
+function proj_spec(A, δ)
+    U, s, V = svd(A)
+    return U * diagm(sign.(s) .* min.(abs.(s), δ)) * V
+end
+
+function _spec(A, δ)
+    # return 1.0 * (eigmax(A) <= δ)
+    return 0.0
+end
+
+function proj_range(A, α, β)
+    return min.(max.(A, α), β)
+end
+
+function _range(A)
+    return 0.0
+end
+
+function _MS_opt(;
+    λ::Number,
+    γ::Number,
+    f_list::Vector,
+    p_list::Vector,
+    A₀::Matrix,
+    ϵ::AbstractFloat,
+    dense_indices,
+    max_iters::Int = 100,
+)
+    M = length(f_list)
+    V = [A₀ for m = 1:M]
+    W = [zero(A₀) for m = 1:M]
+    A = [zero(A₀) for m = 1:M]
+    Z = [zero(A₀) for m = 1:M]
+
+    @inline Q(A) = sum([f(A) for f in f_list])
+
+    iters = 0
+
+    difference = 2ϵ
+    old_Q::Float64 = Inf
+    new_Q::Float64 = 0.0
+    while (difference >= ϵ) && (iters < max_iters)
+
+        for w_ind in 1:(M-1)
+            W[w_ind][dense_indices] .= V[w_ind][dense_indices] .+ λ .* V[M][dense_indices]
+        end
+
+        W[M][dense_indices] .= V[M][dense_indices] .- γ .* sum(V[1:(M-1)])[dense_indices]
+
+        for a_ind in 1:(M-1)
+            A[a_ind][dense_indices] .= W[a_ind][dense_indices] .- λ .* p_list[a_ind](W[a_ind], inv(γ))[dense_indices]
+        end
+        A[M][dense_indices] .= p_list[M](W[M], γ)[dense_indices]
+
+        # @info Q(A[M])
+        new_Q = Q(A[M])
+        difference = abs(new_Q .- old_Q)
+        old_Q = copy(new_Q)
+        iters += 1
+
+        for z_ind in 1:(M-1)
+            Z[z_ind][dense_indices] .= A[z_ind][dense_indices] .+ λ .* A[M][dense_indices]
+        end
+        Z[M][dense_indices] .= A[M][dense_indices] .- γ .* sum(A[1:(M-1)])[dense_indices]
+
+        for v_ind in 1:M
+            V[v_ind][dense_indices] .= V[v_ind][dense_indices] .- W[v_ind][dense_indices] .+ Z[v_ind][dense_indices]
+        end
+    end
+    return A[M]
+end
+
+
+function _DR_opt(f1, f2, proxf1, proxf2, θ, K, Q, val_dict, Z0, ϵ, γ; max_iters = 100, dense_indices = eachindex(Z0))
     difference = 2 * ϵ
     Z = copy(Z0)
     A = zero(Z)
@@ -204,14 +326,14 @@ function _DR_opt(f1, f2, proxf1, proxf2, θ, K, Q, val_dict, Z0, ϵ, γ; maxiter
     A_old = copy(A)
     V = zero(A)
     V[dense_indices] .= proxf1(2A .- Z, θ, K, Q, val_dict)[dense_indices]
-    Z[dense_indices] .= (Z + θ .* (V .- A))[dense_indices]
+    Z[dense_indices] .= (Z+θ.*(V.-A))[dense_indices]
     # println(Z + θ .* (V - A))
     iters = 0
-    while (difference >= ϵ) && (iters < maxiters)
-        A[dense_indices]  .= proxf2(Z, γ)[dense_indices]
-        V[dense_indices]  .= proxf1(2.0 .* A .- Z, θ, K, Q, val_dict)[dense_indices]
+    while (difference >= ϵ) && (iters < max_iters)
+        A[dense_indices] .= proxf2(Z, γ)[dense_indices]
+        V[dense_indices] .= proxf1(2.0 .* A .- Z, θ, K, Q, val_dict)[dense_indices]
         # @info(V, isotropic_proxf1(2.0 .* A - Z, θ, K, Q, val_dict))
-        Z[dense_indices]  .= (Z .+ θ .* (V .- A))[dense_indices]
+        Z[dense_indices] .= (Z.+θ.*(V.-A))[dense_indices]
         difference = abs.(f1(A) + f2(A) - f1(A_old) - f2(A_old))
         A_old .= A
         iters += 1
@@ -219,7 +341,60 @@ function _DR_opt(f1, f2, proxf1, proxf2, θ, K, Q, val_dict, Z0, ϵ, γ; maxiter
     return A
 end
 
-function graphEM(dimA, steps, Y, H, m0, P, Q, R; γ = 0.1, θ = 1.0, dense_indices = eachindex(zeros(dimA, dimA)), init = rand(length(dense_indices)))
+function graphEM_MS(
+    dimA,
+    steps,
+    Y,
+    H,
+    m0,
+    P,
+    Q,
+    R,
+    λ;
+    dense_indices = eachindex(zeros(dimA, dimA)),
+    init = rand(length(dense_indices)),
+    max_iters = 100,
+    ϵ = 1e-6,
+    f_list::Vector,
+    p_list::Vector,
+)
+    A_gem = zeros(dimA, dimA)
+    A_gem[dense_indices] .= init
+
+
+    for s = 1:steps
+        _vd = _Q_func(Y, A_gem, H, m0, P, Q, R)
+        n_fl = vcat(x -> f1_fvd(x, Q, _vd), f_list)
+        n_pl = vcat((x,y) -> prox_f1(x, Q, y, _vd), p_list)
+        A_gem = _MS_opt(
+            λ = λ,
+            γ = (1 - λ) / (length(f_list)),
+            f_list = n_fl,
+            p_list = n_pl,
+            A₀ = A_gem,
+            ϵ = ϵ,
+            dense_indices = dense_indices,
+            max_iters = max_iters,
+        )
+    end
+    return A_gem
+end
+
+
+function graphEM(
+    dimA,
+    steps,
+    Y,
+    H,
+    m0,
+    P,
+    Q,
+    R;
+    γ = 0.1,
+    θ = 1.0,
+    dense_indices = eachindex(zeros(dimA, dimA)),
+    init = rand(length(dense_indices)),
+)
     A_gem = zeros(dimA, dimA)
     A_gem[dense_indices] .= init
     T = size(Y, 2)
