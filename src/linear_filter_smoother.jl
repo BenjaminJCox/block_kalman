@@ -79,7 +79,7 @@ function _perform_rts(kalman_out, A, H, Q, R)
     return (rts_means, rts_covs, G_ks, (zs_G, zs_m, zs_P))
 end
 
-function _Q_func(observations, A, H, m0, P0, Q, R)
+function _Q_func_ns(observations, A, H, m0, P0, Q, R)
     kal = _perform_kalman(observations, A, H, m0, P0, Q, R, lle = false)
     rts = _perform_rts(kal, A, H, Q, R)
     rts_means = rts[1]
@@ -96,35 +96,34 @@ function _Q_func(observations, A, H, m0, P0, Q, R)
     K = size(observations, 2)
 
     B += observations[:, 1] * rts_means[:, 1]'
-    Σ += rts_covs[:, :, 1] .+ (rts_means[:, 1] * rts_means[:, 1]')
+    Σ += rts_covs[:, :, 1] + (rts_means[:, 1] * rts_means[:, 1]')
     Φ += rts_z[3] + (rts_z[2] * rts_z[2]')
-    C += (rts_covs[:, :, 1] * rts_z[1]') .+ (rts_means[:, 1] * rts_z[2]')
+    C += (rts_covs[:, :, 1] * rts_z[1]') + (rts_means[:, 1] * rts_z[2]')
     D += observations[:, 1] * observations[:, 1]'
 
     for k = 2:K
         B += observations[:, k] * rts_means[:, k]'
-        Σ += rts_covs[:, :, k] .+ (rts_means[:, k] * rts_means[:, k]')
-        Φ += rts_covs[:, :, k-1] .+ (rts_means[:, k-1] * rts_means[:, k-1]')
+        Σ += rts_covs[:, :, k] + (rts_means[:, k] * rts_means[:, k]')
+        Φ += rts_covs[:, :, k-1] + (rts_means[:, k-1] * rts_means[:, k-1]')
         C += (rts_covs[:, :, k] * rts_G[:, :, k-1]') + (rts_means[:, k] * rts_means[:, k-1]')
         D += observations[:, k] * observations[:, k]'
     end
-    B ./= K
-    Σ ./= K
-    Φ ./= K
-    C ./= K
-    D ./= K
+    # B ./= K
+    # Σ ./= K
+    # Φ ./= K
+    # C ./= K
+    # D ./= K
 
     val_dict = @dict Σ Φ C B D
     return val_dict
 end
 
 function f1_fvd(A, Q, val_dict)
-    Σ = val_dict[:Σ]
-    C = val_dict[:C]
+    Φ = val_dict[:Σ]
+    Δ = val_dict[:C]
     Φ = val_dict[:Φ]
-    return 0.5 .* tr(inv(Q) * (Σ - C * A' - A * C' + A * Φ * A'))
+    return 0.5 .* tr(inv(Q) * (Φ - Δ * transpose(A) - A * transpose(Δ) + A * Φ * transpose(A)))
 end
-
 
 function _Q_func(observations, A′, H, m0, P0, Q, R, _lp)
     kal = _perform_kalman(observations, A′, H, m0, P0, Q, R)
@@ -206,7 +205,7 @@ end
 
 function prox_f1(A, Q, ϑ, val_dict)
     # in new notation C is now Δ, using old for consistency
-    C = val_dict[:C]
+    Δ = val_dict[:C]
     Φ = val_dict[:Φ]
     Q_inv = inv(Q)
     Φ_inv = inv(Φ)
@@ -218,7 +217,7 @@ function prox_f1(A, Q, ϑ, val_dict)
     #
     # rv = inv(_t1) * _t2
     # return reshape(rv, size(A))
-    return sylvester(ϑ .* Q_inv, Φ_inv, A * Φ_inv .+ ϑ .* Q_inv * C * Φ_inv)
+    return sylvester(ϑ .* Q_inv, Φ_inv, -(A * Φ_inv .+ ϑ .* Q_inv * Δ * Φ_inv))
 end
 
 function prox_laplace(A, ϑ)
@@ -271,7 +270,7 @@ function _MS_opt(;
     A₀::Matrix,
     ϵ::AbstractFloat,
     dense_indices,
-    max_iters::Int = 100,
+    max_iters::Int = 1000,
 )
     M = length(f_list)
     V = [A₀ for m = 1:M]
@@ -289,24 +288,24 @@ function _MS_opt(;
     while (difference >= ϵ) && (iters < max_iters)
 
         for w_ind in 1:(M-1)
-            W[w_ind][dense_indices] .= V[w_ind][dense_indices] .+ λ .* V[M][dense_indices]
+            W[w_ind][dense_indices] .= V[w_ind][dense_indices] .+ γ .* V[M][dense_indices]
         end
 
         W[M][dense_indices] .= V[M][dense_indices] .- γ .* sum(V[1:(M-1)])[dense_indices]
 
         for a_ind in 1:(M-1)
-            A[a_ind][dense_indices] .= W[a_ind][dense_indices] .- λ .* p_list[a_ind](W[a_ind], inv(γ))[dense_indices]
+            A[a_ind][dense_indices] .= W[a_ind][dense_indices] .- γ .* p_list[a_ind](W[a_ind]/γ, inv(γ))[dense_indices]
         end
         A[M][dense_indices] .= p_list[M](W[M], γ)[dense_indices]
 
         # @info Q(A[M])
+        iters += 1
         new_Q = Q(A[M])
         difference = abs(new_Q .- old_Q)
         old_Q = copy(new_Q)
-        iters += 1
 
         for z_ind in 1:(M-1)
-            Z[z_ind][dense_indices] .= A[z_ind][dense_indices] .+ λ .* A[M][dense_indices]
+            Z[z_ind][dense_indices] .= A[z_ind][dense_indices] .+ γ .* A[M][dense_indices]
         end
         Z[M][dense_indices] .= A[M][dense_indices] .- γ .* sum(A[1:(M-1)])[dense_indices]
 
@@ -314,9 +313,48 @@ function _MS_opt(;
             V[v_ind][dense_indices] .= V[v_ind][dense_indices] .- W[v_ind][dense_indices] .+ Z[v_ind][dense_indices]
         end
     end
+    # @info(iters)
     return A[M]
 end
 
+function graphEM_MS(
+    dimA,
+    steps,
+    Y,
+    H,
+    m0,
+    P,
+    Q,
+    R,
+    λ;
+    dense_indices = eachindex(zeros(dimA, dimA)),
+    init = rand(length(dense_indices)),
+    max_iters = 1000,
+    ϵ = 1e-4,
+    f_list::Vector,
+    p_list::Vector,
+)
+    A_gem = zeros(dimA, dimA)
+    A_gem[dense_indices] .= init
+    K = size(Y, 2)
+
+    for s = 1:steps
+        _vd = _Q_func_ns(Y, A_gem, H, m0, P, Q, R)
+        n_fl = vcat(x -> K * f1_fvd(x, Q, _vd), f_list)
+        n_pl = vcat((x,y) -> prox_f1(x, Q, y, _vd), p_list)
+        A_gem = _MS_opt(
+            λ = λ,
+            γ = (1 - λ) * 0.99,
+            f_list = n_fl,
+            p_list = n_pl,
+            A₀ = A_gem,
+            ϵ = ϵ,
+            dense_indices = dense_indices,
+            max_iters = max_iters,
+        )
+    end
+    return A_gem
+end
 
 function _DR_opt(f1, f2, proxf1, proxf2, θ, K, Q, val_dict, Z0, ϵ, γ; max_iters = 100, dense_indices = eachindex(Z0))
     difference = 2 * ϵ
@@ -340,46 +378,6 @@ function _DR_opt(f1, f2, proxf1, proxf2, θ, K, Q, val_dict, Z0, ϵ, γ; max_ite
     end
     return A
 end
-
-function graphEM_MS(
-    dimA,
-    steps,
-    Y,
-    H,
-    m0,
-    P,
-    Q,
-    R,
-    λ;
-    dense_indices = eachindex(zeros(dimA, dimA)),
-    init = rand(length(dense_indices)),
-    max_iters = 100,
-    ϵ = 1e-6,
-    f_list::Vector,
-    p_list::Vector,
-)
-    A_gem = zeros(dimA, dimA)
-    A_gem[dense_indices] .= init
-
-
-    for s = 1:steps
-        _vd = _Q_func(Y, A_gem, H, m0, P, Q, R)
-        n_fl = vcat(x -> f1_fvd(x, Q, _vd), f_list)
-        n_pl = vcat((x,y) -> prox_f1(x, Q, y, _vd), p_list)
-        A_gem = _MS_opt(
-            λ = λ,
-            γ = (1 - λ) / (length(f_list)),
-            f_list = n_fl,
-            p_list = n_pl,
-            A₀ = A_gem,
-            ϵ = ϵ,
-            dense_indices = dense_indices,
-            max_iters = max_iters,
-        )
-    end
-    return A_gem
-end
-
 
 function graphEM(
     dimA,

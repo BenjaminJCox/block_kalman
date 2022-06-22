@@ -2,6 +2,7 @@ using DrWatson
 using Distributions, Random, LinearAlgebra, BlockDiagonals
 using InvertedIndices
 using CairoMakie
+using MAT
 
 include(srcdir("linear_filter_smoother.jl"))
 include(srcdir("lgssm_clustering.jl"))
@@ -15,7 +16,7 @@ A = BlockDiagonal(A_blocks)
 A = Matrix(A)
 A ./= 1 .* eigmax(A)
 
-qr_mult = 1e-1
+qr_mult = 1
 Q = Matrix(qr_mult .* I(a_dim))
 R = Matrix(qr_mult .* I(a_dim))
 # Q = Matrix(1e-2 .* I(a_dim))
@@ -25,7 +26,7 @@ P = Matrix(1e-8 .* I(a_dim))
 
 m0 = ones(a_dim)
 
-T = 150
+T = 1000
 
 X = zeros(a_dim, T)
 Y = zeros(a_dim, T)
@@ -44,6 +45,8 @@ for t = 1:T
     end
 end
 
+matwrite("bentest.mat", Dict("gt" => Matrix(transpose(X)), "D1" => A, "ob" => Matrix(transpose(Y))))
+
 # dinds = CartesianIndices(A)
 
 # γ = exp(0.25)
@@ -51,27 +54,30 @@ end
 η = 0.01
 
 # A_init = MLEM_A(a_dim, 25, Y, H, m0, P, Q, R)
-A_init = randn(a_dim, a_dim)
+A_init = rand(a_dim, a_dim)
+A_init = (A_init + A_init')/2
 
-f_list = [x -> _spec(x, 0.99), x -> η .* _laplace(x)]
-# f_list = [x -> η .* _laplace(x)]
+# f_list = [x -> _spec(x, 0.99), x -> η .* _laplace(x)]
+f_list = [x -> η .* _laplace(x)]
 
-p_list = [(x,y) -> proj_spec(x, 0.99), (x,y) -> prox_laplace(x, η * y)]
-# p_list = [(x,y) -> prox_laplace(x, η * y)]
+# p_list = [(x,y) -> proj_spec(x, 0.99), (x,y) -> prox_laplace(x, η * y)]
+p_list = [(x,y) -> prox_laplace(x, η * y)]
 
-a_gem1 = graphEM_MS(
-    a_dim,
-    50,
-    Y,
-    H,
-    m0,
-    P,
-    Q,
-    R,
-    0.9 / 3;
-    f_list = f_list,
-    p_list = p_list,
-)
+# a_gem1 = graphEM_MS(
+#     a_dim,
+#     30,
+#     Y,
+#     H,
+#     m0,
+#     P,
+#     Q,
+#     R,
+#     0.9 / 2;
+#     f_list = f_list,
+#     p_list = p_list,
+# ); display(a_gem1)
+
+a_gem1 = GraphEM_stable(Y, H, Q, R, m0, P, r = 1, λ = 0.3)
 
 
 
@@ -79,6 +85,7 @@ a_gem = graphEM(a_dim, 50, Y, H, m0, P, Q, R, γ = γ, θ = 1.0, init = vec(A_in
 a_gem_clstr = graphem_clustering(4, a_dim, 50, Y, H, m0, P, Q, R, γ = γ, θ = 1.0, directed = true, max_iters = 50, init = vec(A_init), rand_reinit = true)
 
 true_filtered = _perform_kalman(Y, A, H, m0, P, Q, R)
+# true_filtered = _kalman(Y, A, H, Q, R, m0, P)
 reduction_filtered = _perform_kalman(Y, a_gem_clstr[1][end], H, m0, P, Q, R)
 gem_filtered = _perform_kalman(Y, a_gem, H, m0, P, Q, R)
 
