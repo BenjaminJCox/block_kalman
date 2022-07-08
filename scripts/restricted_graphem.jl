@@ -2,9 +2,11 @@ using DrWatson
 using Distributions, Random, LinearAlgebra, BlockDiagonals
 using InvertedIndices
 using CairoMakie
-using MAT
+# using MAT
 
 include(srcdir("linear_filter_smoother.jl"))
+include(srcdir("graphem_prereq.jl"))
+include(srcdir("graphem_clustering.jl"))
 include(srcdir("lgssm_clustering.jl"))
 
 
@@ -45,7 +47,7 @@ for t = 1:T
     end
 end
 
-matwrite("bentest.mat", Dict("gt" => Matrix(transpose(X)), "D1" => A, "ob" => Matrix(transpose(Y))))
+# matwrite("bentest.mat", Dict("gt" => Matrix(transpose(X)), "D1" => A, "ob" => Matrix(transpose(Y))))
 
 # dinds = CartesianIndices(A)
 
@@ -58,10 +60,10 @@ A_init = rand(a_dim, a_dim)
 A_init = (A_init + A_init')/2
 
 # f_list = [x -> _spec(x, 0.99), x -> η .* _laplace(x)]
-f_list = [x -> η .* _laplace(x)]
-
-# p_list = [(x,y) -> proj_spec(x, 0.99), (x,y) -> prox_laplace(x, η * y)]
-p_list = [(x,y) -> prox_laplace(x, η * y)]
+# f_list = [x -> η .* _laplace(x)]
+#
+# # p_list = [(x,y) -> proj_spec(x, 0.99), (x,y) -> prox_laplace(x, η * y)]
+# p_list = [(x,y) -> prox_laplace(x, η * y)]
 
 # a_gem1 = graphEM_MS(
 #     a_dim,
@@ -77,12 +79,15 @@ p_list = [(x,y) -> prox_laplace(x, η * y)]
 #     p_list = p_list,
 # ); display(a_gem1)
 
-a_gem1 = GraphEM_stable(Y, H, Q, R, m0, P, r = 1, λ = 0.3)
+a_gem1 = GraphEM_stable(Y, H, Q, R, m0, P, r = 20, λ = 0.99/3)
+
+okalm_n = _kalman(Y, A, H, Q, R, m0, P, likelihood = true)
+okalm_o = _perform_kalman(Y, A, H, m0, P, Q, R, lle = true)
 
 
-
-a_gem = graphEM(a_dim, 50, Y, H, m0, P, Q, R, γ = γ, θ = 1.0, init = vec(A_init)); display(a_gem)
-a_gem_clstr = graphem_clustering(4, a_dim, 50, Y, H, m0, P, Q, R, γ = γ, θ = 1.0, directed = true, max_iters = 50, init = vec(A_init), rand_reinit = true)
+# a_gem = graphEM(a_dim, 50, Y, H, m0, P, Q, R, γ = γ, θ = 1.0, init = vec(A_init)); display(a_gem)
+# a_gem_clstr = graphem_clustering(4, a_dim, 50, Y, H, m0, P, Q, R, γ = γ, θ = 1.0, directed = true, max_iters = 50, init = vec(A_init), rand_reinit = true)
+a_gem_clstr = Stable_GraphEM_clustering(4, Y, H, Q, R, m0, P, rand_reinit = true)
 
 true_filtered = _perform_kalman(Y, A, H, m0, P, Q, R)
 # true_filtered = _kalman(Y, A, H, Q, R, m0, P)
