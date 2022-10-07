@@ -83,6 +83,9 @@ function Stable_GraphEM_clustering(
     Mi = 1000,
     max_iters = 20,
 )
+    @info("----------------")
+    @info("Block KF")
+    @info("Initialisation")
     _state_dim = size(Q, 1)
     initial_estimate = GraphEM_stable(
         y,
@@ -115,7 +118,9 @@ function Stable_GraphEM_clustering(
     n_clusters = length(weakly_connected_components(G))
     _ll = Vector{Float64}(undef, max_iters)
     _ll[1] = _kalman(y, initial_estimate, H, Q, R, μ₀, Σ₀; drop_priors = true, likelihood = true)[3]
+    @info("----------------")
     while (n_clusters < num_clusters) && (c_iters < max_iters)
+        @info("Iteration $(c_iters)")
         # perform pseudo girvan newman clustering
         G, el = sever_largest_betweenness!(G)
         @info("Removing element $(Tuple(el))")
@@ -157,6 +162,7 @@ function Stable_GraphEM_clustering(
         n_clusters = length(weakly_connected_components(G))
         @info("Now have $(n_clusters) clusters")
         c_iters += 1
+        @info("----------------")
     end
     if c_iters >= max_iters
         @warn("Maximum number of iterations reached")

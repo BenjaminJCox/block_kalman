@@ -305,6 +305,8 @@ function GraphEM_stable(
         if s > 1
             if norm(A .- Ap, 2) < ϵ * norm(A)
                 @info("GraphEM converged in $(s) EM iterations")
+                _ll = _kalman(y, Ap, H, Q, R, μ₀, Σ₀; drop_priors = true, likelihood = true)[3]
+                @info("Log-likelihood of estimate is $(_ll)")
                 return Ap
             end
         end
