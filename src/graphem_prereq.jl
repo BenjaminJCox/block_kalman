@@ -37,10 +37,10 @@ function _kalman(y, A, H, Q, R, μ₀, Σ₀; drop_priors = true, likelihood = f
 
     if drop_priors
         # for general use
-        if !likelihood
-            return (Matrix(μ[:, 1:end]), Array(Σ[:, :, 1:end]))
-        else
+        if likelihood
             return (Matrix(μ[:, 1:end]), Array(Σ[:, :, 1:end]), ll_est)
+        else
+            return (Matrix(μ[:, 1:end]), Array(Σ[:, :, 1:end]))
         end
     else
         # use with RTS smoother

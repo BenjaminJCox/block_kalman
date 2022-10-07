@@ -24,7 +24,9 @@ function rem_edge!(g::AbstractSimpleWeightedGraph, e::SimpleWeightedGraphEdge)
 end
 
 function determine_edge_betweenness(G)
-    paths = floyd_warshall_shortest_paths(G)
+    Gc = copy(G)
+    Gc.weights = abs.(Gc.weights)
+    paths = floyd_warshall_shortest_paths(Gc)
     e_paths = enumerate_paths(paths)
     # @info("e_paths exists")
     betweenness_matrix = zeros(Int, nv(G), nv(G))
@@ -72,6 +74,7 @@ function Stable_GraphEM_clustering(
     μ₀,
     Σ₀;
     directed = false,
+    pop_both = false,
     r = 20.0,
     init = _prox_stable(_create_adjacency_AR1(size(Q, 1), 0.1) .+ 0.1 .* randn(size(Q)), η),
     rand_reinit = true,
@@ -102,7 +105,7 @@ function Stable_GraphEM_clustering(
     new_estimate = initial_estimate
     dense_elements = findall(!=(0), initial_estimate)
     if directed
-        G = DiGraph(initial_estimate)
+        G = SimpleWeightedDiGraph(initial_estimate)
     else
         G = Graph(abs.(initial_estimate) .+ abs.(initial_estimate)')
     end
@@ -113,59 +116,41 @@ function Stable_GraphEM_clustering(
     _ll = Vector{Float64}(undef, max_iters)
     _ll[1] = _kalman(y, initial_estimate, H, Q, R, μ₀, Σ₀; drop_priors = true, likelihood = true)[3]
     while (n_clusters < num_clusters) && (c_iters < max_iters)
+        # perform pseudo girvan newman clustering
         G, el = sever_largest_betweenness!(G)
-        @info("Removing element $(el)")
-        pop_cart_from_edges!(el[1], el[2], dense_elements)
+        @info("Removing element $(Tuple(el))")
+        pop_cart_from_edges!(el[1], el[2], dense_elements, both = pop_both)
         if rand_reinit
             # new_estimate = graphEM(dimA, steps, Y, H, m0, P, Q, R; γ = γ, dense_indices = dense_elements, θ = θ)
             A0 = zeros(_state_dim, _state_dim)
             A0[dense_elements] = _prox_stable(_create_adjacency_AR1(size(Q, 1), 0.1) .+ 0.1 .* randn(size(Q)), η)[dense_elements]
-            new_estimate = GraphEM_stable(
-                y,
-                H,
-                Q,
-                R,
-                μ₀,
-                Σ₀;
-                λ = 0.33,
-                γ = (0.66) * 0.99,
-                η = 0.99,
-                r = r,
-                A₀ = A0,
-                E_iterations = Ei,
-                M_iterations = Mi,
-                ϵ = ϵ,
-                ξ = 1e-6,
-                dense_indices = dense_elements,
-            )
         else
             # new_estimate = graphEM(dimA, steps, Y, H, m0, P, Q, R; γ = γ, dense_indices = dense_elements, θ = θ, init = new_estimate[dense_elements])
             A0 = zeros(_state_dim, _state_dim)
             A0[dense_elements] = new_estimate[dense_elements]
-            new_estimate = GraphEM_stable(
-                y,
-                H,
-                Q,
-                R,
-                μ₀,
-                Σ₀;
-                λ = 0.33,
-                γ = (0.66) * 0.99,
-                η = 0.99,
-                r = r,
-                A₀ = A0,
-                E_iterations = Ei,
-                M_iterations = Mi,
-                ϵ = ϵ,
-                ξ = 1e-6,
-                dense_indices = dense_elements,
-            )
         end
+        new_estimate = GraphEM_stable(
+            y,
+            H,
+            Q,
+            R,
+            μ₀,
+            Σ₀;
+            λ = 0.33,
+            γ = (0.66) * 0.99,
+            η = 0.99,
+            r = r,
+            A₀ = A0,
+            E_iterations = Ei,
+            M_iterations = Mi,
+            ϵ = ϵ,
+            ξ = 1e-6,
+            dense_indices = dense_elements,
+        )
         out_array[c_iters+1] = new_estimate
-        # _ll[c_iters+1] = _perform_kalman(Y, new_estimate, H, m0, P, Q, R; lle = true)[3]
         _ll[c_iters+1] = _kalman(y, new_estimate, H, Q, R, μ₀, Σ₀; drop_priors = true, likelihood = true)[3]
         if directed
-            G = DiGraph(new_estimate)
+            G = SimpleWeightedDiGraph(new_estimate)
         else
             G = Graph(abs.(new_estimate) .+ abs.(new_estimate)')
         end

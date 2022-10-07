@@ -2,15 +2,15 @@ using DrWatson
 using Distributions, Random, LinearAlgebra, BlockDiagonals
 using InvertedIndices
 using CairoMakie
+using GraphMakie, NetworkLayout
 # using MAT
 
 include(srcdir("linear_filter_smoother.jl"))
 include(srcdir("graphem_prereq.jl"))
 include(srcdir("graphem_clustering.jl"))
-include(srcdir("lgssm_clustering.jl"))
 
 
-Random.seed!(0xabcdefabcf)
+Random.seed!(0xabcdefabcdef)
 
 A_blocks = [rand(2, 2) .+ 2.0 for _ = 1:4]
 a_dim = 8
@@ -28,7 +28,7 @@ P = Matrix(1e-8 .* I(a_dim))
 
 m0 = ones(a_dim)
 
-T = 1000
+T = 100
 
 X = zeros(a_dim, T)
 Y = zeros(a_dim, T)
@@ -52,7 +52,7 @@ end
 # dinds = CartesianIndices(A)
 
 # γ = exp(0.25)
-γ = 1.0
+γ = 0.1
 η = 0.01
 
 # A_init = MLEM_A(a_dim, 25, Y, H, m0, P, Q, R)
@@ -79,7 +79,7 @@ A_init = (A_init + A_init')/2
 #     p_list = p_list,
 # ); display(a_gem1)
 
-a_gem1 = GraphEM_stable(Y, H, Q, R, m0, P, r = 20, λ = 0.99/3)
+a_gem1 = GraphEM_stable(Y, H, Q, R, m0, P, r = 25, λ = 0.99/3)
 
 okalm_n = _kalman(Y, A, H, Q, R, m0, P, likelihood = true)
 okalm_o = _perform_kalman(Y, A, H, m0, P, Q, R, lle = true)
@@ -87,12 +87,12 @@ okalm_o = _perform_kalman(Y, A, H, m0, P, Q, R, lle = true)
 
 # a_gem = graphEM(a_dim, 50, Y, H, m0, P, Q, R, γ = γ, θ = 1.0, init = vec(A_init)); display(a_gem)
 # a_gem_clstr = graphem_clustering(4, a_dim, 50, Y, H, m0, P, Q, R, γ = γ, θ = 1.0, directed = true, max_iters = 50, init = vec(A_init), rand_reinit = true)
-a_gem_clstr = Stable_GraphEM_clustering(4, Y, H, Q, R, m0, P, rand_reinit = true)
+a_gem_clstr = Stable_GraphEM_clustering(4, Y, H, Q, R, m0, P, rand_reinit = true, r = 25, directed = true)
 
 true_filtered = _perform_kalman(Y, A, H, m0, P, Q, R)
 # true_filtered = _kalman(Y, A, H, Q, R, m0, P)
 reduction_filtered = _perform_kalman(Y, a_gem_clstr[1][end], H, m0, P, Q, R)
-gem_filtered = _perform_kalman(Y, a_gem, H, m0, P, Q, R)
+gem_filtered = _perform_kalman(Y, a_gem1, H, m0, P, Q, R)
 
 sq_error_true = cumsum(sqrt.(vec(sum((true_filtered[1] .- X).^2, dims = 1))))
 sq_error_redu = cumsum(sqrt.(vec(sum((reduction_filtered[1] .- X).^2, dims = 1))))
@@ -139,8 +139,62 @@ end
 rowgap!(f2.layout, 1)
 
 sum((a_gem_clstr[1][end] .- A).^2)
-sum((a_gem .- A).^2)
+sum((a_gem1 .- A).^2)
 # sum((A_init .- A).^2)
 
+G = SimpleWeightedDiGraph(A)
+
+wm = Matrix(weights(G))
+wv = vec(wm[wm .!= 0.0])
+
+f4, ax4, p4 = graphplot(G,  nlabels=repr.(1:nv(G)), nlabels_align=(:center,:center), layout = NetworkLayout.Spring(C = 5, seed = 14353), arrow_size = 20, edge_width = 6 .* wv, node_size = 5 .* degree(G), curve_distance = .5)
+# offsets = 0.5 * (p[:node_pos][] .- p[:node_pos][][1])
+# offsets[1] = Point2f(0, 0.1)
+offsets = [Point2(x,x) for x in 1 .* ones(nv(G))]
+p4.nlabels_offset[] = offsets
+autolimits!(ax4)
+hidedecorations!(ax4); hidespines!(ax4)
+ax4.aspect = DataAspect()
+
+f4
+
+G = SimpleWeightedDiGraph(a_gem1)
+
+wm = Matrix(weights(G))
+wv = vec(wm[wm .!= 0.0])
+
+f5, ax5, p5 = graphplot(G,  nlabels=repr.(1:nv(G)), nlabels_align=(:center,:center), layout = NetworkLayout.Spring(C = 5, seed = 14353), arrow_size = 20, edge_width = 6 .* wv, node_size = 5 .* degree(G), curve_distance = .5)
+# offsets = 0.5 * (p[:node_pos][] .- p[:node_pos][][1])
+# offsets[1] = Point2f(0, 0.1)
+offsets = [Point2(x,x) for x in 1 .* ones(nv(G))]
+p5.nlabels_offset[] = offsets
+autolimits!(ax5)
+hidedecorations!(ax5); hidespines!(ax5)
+ax5.aspect = DataAspect()
+
+f5
+
+G = SimpleWeightedDiGraph(a_gem_clstr[1][end])
+
+wm = Matrix(weights(G))
+wv = vec(wm[wm .!= 0.0])
+
+f6, ax6, p6 = graphplot(G,  nlabels=repr.(1:nv(G)), nlabels_align=(:center,:center), layout = NetworkLayout.Spring(C = 5, seed = 14353), arrow_size = 20, edge_width = 6 .* wv, node_size = 5 .* degree(G), curve_distance = .5)
+# offsets = 0.5 * (p[:node_pos][] .- p[:node_pos][][1])
+# offsets[1] = Point2f(0, 0.1)
+offsets = [Point2(x,x) for x in 1 .* ones(nv(G))]
+p6.nlabels_offset[] = offsets
+autolimits!(ax6)
+hidedecorations!(ax6); hidespines!(ax6)
+ax6.aspect = DataAspect()
+
+f6
+
+
+f
 f1
 f2
+
+f4
+f5
+f6
