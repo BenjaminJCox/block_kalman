@@ -102,7 +102,7 @@ function _f1(A, Q, RTSS)
     # return (1 / 2) * tr(inv(Q) * (Ψ - Δ * A' - A * Δ' + A * Φ * A'))
 end
 
-allequal(x) = all(y->y==x[1],x)
+allequal(x) = all(y -> y == x[1], x)
 
 function _prox_f1(A, ϑ, Q, RTSS)
     Ψ, Δ, Φ = RTSS[4]
@@ -179,7 +179,7 @@ function _MS_l1_stab(A, Q, _RTSS; γ = 0.663, η = 0.99, r = 0.01, MS_iterations
     # Ψ, Δ, Φ = _RTSS
     @inline majorant(M) = _f1(M, Q, _RTSS) .+ _laplace(M, r)
     @inline objective(A1, A2) = abs(majorant(A1) .- majorant(A2))
-    for iter in 1:MS_iterations
+    for iter = 1:MS_iterations
         Y1[dense_indices] = X[dense_indices] .- γ .* (V1[dense_indices] .+ V2[dense_indices])
         Y21[dense_indices] = V1[dense_indices] .+ γ .* X[dense_indices]
         Y22[dense_indices] = V2[dense_indices] .+ γ .* X[dense_indices]
@@ -219,7 +219,7 @@ function _MS_l1(A, Q, _RTSS; γ = 0.505, r = 0.01, MS_iterations = 1000, ξ = 1e
     # Ψ, Δ, Φ = _RTSS
     @inline majorant(M) = _f1(M, Q, _RTSS) .+ _laplace(M, r)
     @inline objective(A1, A2) = abs(majorant(A1) .- majorant(A2))
-    for iter in 1:MS_iterations
+    for iter = 1:MS_iterations
         Y1 = X .- γ .* V
         Y2 = V .+ γ .* X
 
@@ -253,7 +253,7 @@ function _DR_l1(A, Q, _RTSS; r = 0.01, DR_iterations = 1000, ξ = 1e-4)
     # Ψ, Δ, Φ = _RTSS
     @inline majorant(M) = _f1(M, Q, _RTSS) .+ _laplace(M, r)
     @inline objective(A1, A2) = abs(majorant(A1) .- majorant(A2))
-    for iter in 1:DR_iterations
+    for iter = 1:DR_iterations
         Xp = _prox_laplace(Y, 1, r)
 
         if iter > 1
@@ -281,7 +281,7 @@ function GraphEM_stable(
     μ₀,
     Σ₀;
     λ = 0.33,
-    γ = (1-λ)*0.99,
+    γ = (1 - λ) * 0.99,
     η = 0.99,
     r = 2.0,
     A₀ = _prox_stable(_create_adjacency_AR1(size(Q, 1), 0.1) .+ 0 .* randn(size(Q)), η),
@@ -289,7 +289,7 @@ function GraphEM_stable(
     M_iterations = 1000,
     ϵ = 1e-3,
     ξ = 1e-6,
-    dense_indices = eachindex(A₀)
+    dense_indices = eachindex(A₀),
 )
     # A = Ap = A₀
     A = copy(A₀)
@@ -297,9 +297,19 @@ function GraphEM_stable(
     A[Not(dense_indices)] .= 0.0
     Ap[Not(dense_indices)] .= 0.0
     # @info(A₀)
-    for s in 1:E_iterations
+    for s = 1:E_iterations
         RTSS_output = _RTSS(y, A, H, Q, R, μ₀, Σ₀)
-        Ap = _MS_l1_stab(A, Q, RTSS_output; γ = γ, η = η, r = r, MS_iterations = M_iterations, ξ = ξ, dense_indices = dense_indices)
+        Ap = _MS_l1_stab(
+            A,
+            Q,
+            RTSS_output;
+            γ = γ,
+            η = η,
+            r = r,
+            MS_iterations = M_iterations,
+            ξ = ξ,
+            dense_indices = dense_indices,
+        )
         # Ap = _MS_l1(A, Q, RTSS_output; γ = γ, r = r, MS_iterations = M_iterations, ξ = ξ)
         # Ap = _DR_l1(A, Q, RTSS_output; r = r, DR_iterations = M_iterations, ξ = ξ)
         if s > 1

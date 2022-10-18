@@ -73,7 +73,7 @@ function Stable_GraphEM_clustering(
     R,
     μ₀,
     Σ₀;
-    directed = false,
+    directed = true,
     pop_both = false,
     r = 20.0,
     init = _prox_stable(_create_adjacency_AR1(size(Q, 1), 0.1) .+ 0.1 .* randn(size(Q)), η),
