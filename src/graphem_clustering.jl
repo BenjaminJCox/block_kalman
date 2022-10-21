@@ -1,5 +1,6 @@
 using LinearAlgebra
 using Graphs, SimpleWeightedGraphs
+using MLBase
 
 include("graphem_prereq.jl")
 
@@ -25,7 +26,9 @@ end
 
 function determine_edge_betweenness(G)
     Gc = copy(G)
-    Gc.weights = abs.(Gc.weights)
+    if hasproperty(Gc, :weights)
+        Gc.weights = abs.(Gc.weights)
+    end
     paths = floyd_warshall_shortest_paths(Gc)
     e_paths = enumerate_paths(paths)
     # @info("e_paths exists")
@@ -45,19 +48,27 @@ function determine_edge_betweenness(G)
     return betweenness_matrix
 end
 
-function sever_largest_betweenness!(G)
+function sever_largest_betweenness!(G; pop_multiple = true)
     betweenness_matrix = determine_edge_betweenness(G)
-    _am = argmax(betweenness_matrix)
+    # _am = argmax(betweenness_matrix)
     _lb = maximum(betweenness_matrix)
     @info("Largest Betweenness: $_lb")
-    rem_edge!(G, _am[1], _am[2])
-    if has_edge(G, _am[2], _am[1])
-        rem_edge!(G, _am[2], _am[1])
+    _amv = findall(e -> e == _lb, betweenness_matrix)
+    if pop_multiple
+        for _am in _amv
+            rem_edge!(G, _am[1], _am[2])
+        # if has_edge(G, _am[2], _am[1])
+            # rem_edge!(G, _am[2], _am[1])
+        # end
+        end
+        return (G, _amv)
+    else
+        rem_edge!(G, _amv[1][1], _amv[1][2])
+        return (G, [_amv[1]])
     end
-    return (G, _am)
 end
 
-function pop_cart_from_edges!(src, dest, cart_list; both = true)
+function pop_cart_from_edges!(src, dest, cart_list; both = false)
     filter!(x -> x != CartesianIndex(src, dest), cart_list)
     if both
         filter!(x -> x != CartesianIndex(dest, src), cart_list)
@@ -82,6 +93,7 @@ function Stable_GraphEM_clustering(
     Ei = 50,
     Mi = 1000,
     max_iters = 20,
+    pop_multiple = true,
 )
     @info("----------------")
     @info("Block KF")
@@ -108,7 +120,7 @@ function Stable_GraphEM_clustering(
     new_estimate = initial_estimate
     dense_elements = findall(!=(0), initial_estimate)
     if directed
-        G = SimpleWeightedDiGraph(initial_estimate)
+        G = SimpleWeightedDiGraph(abs.(initial_estimate))
     else
         G = Graph(abs.(initial_estimate) .+ abs.(initial_estimate)')
     end
@@ -122,9 +134,11 @@ function Stable_GraphEM_clustering(
     while (n_clusters < num_clusters) && (c_iters < max_iters)
         @info("Iteration $(c_iters)")
         # perform pseudo girvan newman clustering
-        G, el = sever_largest_betweenness!(G)
+        G, el = sever_largest_betweenness!(G, pop_multiple = pop_multiple)
         @info("Removing element $(Tuple(el))")
-        pop_cart_from_edges!(el[1], el[2], dense_elements, both = pop_both)
+        for _el in el
+            pop_cart_from_edges!(_el[1], _el[2], dense_elements, both = pop_both)
+        end
         if rand_reinit
             # new_estimate = graphEM(dimA, steps, Y, H, m0, P, Q, R; γ = γ, dense_indices = dense_elements, θ = θ)
             A0 = zeros(_state_dim, _state_dim)
@@ -155,7 +169,7 @@ function Stable_GraphEM_clustering(
         out_array[c_iters+1] = new_estimate
         _ll[c_iters+1] = _kalman(y, new_estimate, H, Q, R, μ₀, Σ₀; drop_priors = true, likelihood = true)[3]
         if directed
-            G = SimpleWeightedDiGraph(new_estimate)
+            G = SimpleWeightedDiGraph(abs.(new_estimate))
         else
             G = Graph(abs.(new_estimate) .+ abs.(new_estimate)')
         end
@@ -170,4 +184,26 @@ function Stable_GraphEM_clustering(
     # return out_array[1:(c_iters-1)]
     _assigned = filter(x -> isassigned(out_array, x), 1:length(out_array))
     return (out_array[_assigned], _ll[_assigned])
+end
+
+function matrix_rmse(est_matrix, true_matrix)
+    E = true_matrix .- est_matrix
+    SQE = E.^2
+    MSE = mean(SQE)
+    RMSE = sqrt(MSE)
+    return RMSE
+end
+
+function prec_rec_graphem(true_A, gem_A)
+    true_sparse = (true_A .== 0.0)
+    est_sparse = (abs.(gem_A) .== 0.0)
+    ts_vec = vec(true_sparse)
+    es_vec = vec(est_sparse)
+    eroc = roc(ts_vec, es_vec)
+    prec = precision(eroc)
+    rec = recall(eroc)
+    f1 = f1score(eroc)
+    spec = true_negative_rate(eroc)
+    rmse = matrix_rmse(gem_A, true_A)
+    return @dict prec rec f1 spec rmse
 end

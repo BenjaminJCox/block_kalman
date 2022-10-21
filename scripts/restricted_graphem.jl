@@ -12,10 +12,14 @@ include(srcdir("graphem_clustering.jl"))
 
 Random.seed!(0xabcdefabcdef)
 
-A_blocks = [rand(2, 2) .+ 2.0 for _ = 1:4]
-a_dim = 8
+
+_blocksize = 2
+# _Mn = MatrixNormal(zeros(_blocksize, _blocksize), Matrix(1.0 * I(_blocksize)), Matrix(1.0 * I(_blocksize)))
+# A_blocks = [_create_adjacency_AR1(_blocksize, 0.1) for _ = 1:4]
+A_blocks = [rand(_blocksize, _blocksize) .+ 2.0 for _ = 1:4]
 A = BlockDiagonal(A_blocks)
 A = Matrix(A)
+a_dim = size(A,1)
 A ./= 1 .* eigmax(A)
 
 qr_mult = 1
@@ -87,7 +91,7 @@ okalm_o = _perform_kalman(Y, A, H, m0, P, Q, R, lle = true)
 
 # a_gem = graphEM(a_dim, 50, Y, H, m0, P, Q, R, γ = γ, θ = 1.0, init = vec(A_init)); display(a_gem)
 # a_gem_clstr = graphem_clustering(4, a_dim, 50, Y, H, m0, P, Q, R, γ = γ, θ = 1.0, directed = true, max_iters = 50, init = vec(A_init), rand_reinit = true)
-a_gem_clstr = Stable_GraphEM_clustering(4, Y, H, Q, R, m0, P, rand_reinit = true, r = 25, directed = true)
+a_gem_clstr = Stable_GraphEM_clustering(4, Y, H, Q, R, m0, P, rand_reinit = true, r = 25, directed = true, pop_multiple = false)
 
 true_filtered = _perform_kalman(Y, A, H, m0, P, Q, R)
 # true_filtered = _kalman(Y, A, H, Q, R, m0, P)
@@ -126,14 +130,14 @@ f1
 
 f2 = Figure(resolution = (1600, max(1600, 200 * a_dim)))
 for dimension = 1:a_dim
-    ax_temp = Axis(f2[dimension, 1])
-    scatter!(ax_temp, 1:T, X[dimension, :], label = "True State", color = "mediumpurple1")
+    ax_tempo = Axis(f2[dimension, 1])
+    scatter!(ax_tempo, 1:T, X[dimension, :], label = "True State", color = "mediumpurple1")
     # lines!(ax_temp, 1:T, true_filtered[1][dimension,:], label = "True Filter")
-    lines!(ax_temp, 1:T, reduction_filtered[1][dimension, :], label = "Block KF")
-    lines!(ax_temp, 1:T, gem_filtered[1][dimension, :], label = "GraphEM")
+    lines!(ax_tempo, 1:T, reduction_filtered[1][dimension, :], label = "Block KF")
+    lines!(ax_tempo, 1:T, gem_filtered[1][dimension, :], label = "GraphEM")
     xlims!(0, T + 1)
     if dimension == a_dim
-        Legend(f2[1:a_dim, 2], ax_temp)
+        Legend(f2[1:a_dim, 2], ax_tempo)
     end
 end
 rowgap!(f2.layout, 1)
@@ -147,7 +151,7 @@ G = SimpleWeightedDiGraph(A)
 wm = Matrix(weights(G))
 wv = vec(wm[wm.!=0.0])
 
-set_theme!(resolution = (600, 300))
+set_theme!(resolution = (300, 300))
 
 _ec = :turquoise3
 _nc = :lightblue3
@@ -251,7 +255,19 @@ f4
 f5
 f6
 
-save(plotsdir("states.pdf"), f7)
+# save(plotsdir("states.pdf"), f7)
 # save(plotsdir("gt_graph.pdf"), f4)
 # save(plotsdir("gem_graph.pdf"), f5)
 # save(plotsdir("bkf_graph.pdf"), f6)
+base_gem_stats = prec_rec_graphem(A, a_gem1)
+clst_gem_stats = prec_rec_graphem(A, a_gem_clstr[1][end])
+
+println("-----------")
+println("Base GraphEM")
+display(base_gem_stats)
+
+println("-----------")
+println("CDKF")
+display(clst_gem_stats)
+
+lines(a_gem_clstr[2])

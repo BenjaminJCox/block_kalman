@@ -90,7 +90,7 @@ function graphem_clustering(num_clusters, dimA, steps, Y, H, m0, P, Q, R; γ = 0
         out_array[c_iters+1] = new_estimate
         _ll[c_iters+1] = _perform_kalman(Y, new_estimate, H, m0, P, Q, R; lle = true)[3]
         if directed
-            G = DiGraph(new_estimate)
+            G = DiGraph(abs.(new_estimate))
         else
             G = Graph(abs.(new_estimate) .+ abs.(new_estimate)')
         end
