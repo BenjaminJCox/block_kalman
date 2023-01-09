@@ -16,8 +16,8 @@ Random.seed!(0xabcdefabcdef)
 
 _blocksize = 2
 # _Mn = MatrixNormal(zeros(_blocksize, _blocksize), Matrix(1.0 * I(_blocksize)), Matrix(1.0 * I(_blocksize)))
-# A_blocks = [_create_adjacency_AR1(_blocksize, 0.1) for _ = 1:4]
-A_blocks = [rand(_blocksize, _blocksize) .+ 2.0 for _ = 1:4]
+# A_blocks = [_create_adjacency_AR1(_blocksize, 0.1) for _ = 1:8]
+A_blocks = [rand(_blocksize, _blocksize) .+ 2.0 for _ = 1:5]
 A = BlockDiagonal(A_blocks)
 A = Matrix(A)
 a_dim = size(A,1)
@@ -33,7 +33,7 @@ P = Matrix(1e-8 .* I(a_dim))
 
 m0 = ones(a_dim)
 
-T = 100
+T = 200
 
 X = zeros(a_dim, T)
 Y = zeros(a_dim, T)
@@ -94,15 +94,27 @@ okalm_o = _perform_kalman(Y, A, H, m0, P, Q, R, lle = true)
 # a_gem_clstr = graphem_clustering(4, a_dim, 50, Y, H, m0, P, Q, R, γ = γ, θ = 1.0, directed = true, max_iters = 50, init = vec(A_init), rand_reinit = true)
 
 quadweight(x) = x .^ 2
-function qmw_e(x, μ, σ)
+function gmw_e(x, μ, σ)
     if x != 0
         x = 1 - exp(-0.5*(x/σ)^2)/σ
     else
         x = x
     end
 end
+function pmw_e(x, γ)
+    if x != 0
+        x = x .^ γ
+    end
+end
+function pmw_m(x)
+    rv = pmw_e(x, 2)
+    rvext = extrema(rv)
+    rv = (rv .- rvext[1])./(rvext[2] - rvext[1])
+    return rv
+end
+
 qmw(x) = qmw_e.(x, mean(x), 1)
-a_gem_clstr = Stable_GraphEM_clustering(4, Y, H, Q, R, m0, P, rand_reinit = true, r = 25, directed = true, pop_multiple = true, weighting_function = quadweight, multiple_descent = true)
+a_gem_clstr = Stable_GraphEM_clustering(5, Y, H, Q, R, m0, P, rand_reinit = true, r = 25, directed = true, pop_multiple = true, weighting_function = identity, multiple_descent = true)
 
 true_filtered = _perform_kalman(Y, A, H, m0, P, Q, R)
 # true_filtered = _kalman(Y, A, H, Q, R, m0, P)

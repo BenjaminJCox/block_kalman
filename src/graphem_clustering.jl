@@ -179,6 +179,9 @@ function Stable_GraphEM_clustering(
                 @info("-------")
             end
             to_remove = argmax(likes)
+            @info("-------")
+            @info("Removing element $(el[to_remove])")
+            @info("-------")
             pop_cart_from_edges!(el[to_remove][1], el[to_remove][2], dense_elements, both = pop_both)
             new_estimate = deepcopy(estimates[to_remove, :, :])
         else
