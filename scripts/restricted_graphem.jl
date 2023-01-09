@@ -8,6 +8,7 @@ using GraphMakie, NetworkLayout
 include(srcdir("linear_filter_smoother.jl"))
 include(srcdir("graphem_prereq.jl"))
 include(srcdir("graphem_clustering.jl"))
+include(srcdir("rw_tools.jl"))
 
 
 Random.seed!(0xabcdefabcdef)
@@ -91,7 +92,17 @@ okalm_o = _perform_kalman(Y, A, H, m0, P, Q, R, lle = true)
 
 # a_gem = graphEM(a_dim, 50, Y, H, m0, P, Q, R, γ = γ, θ = 1.0, init = vec(A_init)); display(a_gem)
 # a_gem_clstr = graphem_clustering(4, a_dim, 50, Y, H, m0, P, Q, R, γ = γ, θ = 1.0, directed = true, max_iters = 50, init = vec(A_init), rand_reinit = true)
-a_gem_clstr = Stable_GraphEM_clustering(4, Y, H, Q, R, m0, P, rand_reinit = true, r = 25, directed = true, pop_multiple = false)
+
+quadweight(x) = x .^ 2
+function qmw_e(x, μ, σ)
+    if x != 0
+        x = 1 - exp(-0.5*(x/σ)^2)/σ
+    else
+        x = x
+    end
+end
+qmw(x) = qmw_e.(x, mean(x), 1)
+a_gem_clstr = Stable_GraphEM_clustering(4, Y, H, Q, R, m0, P, rand_reinit = true, r = 25, directed = true, pop_multiple = true, weighting_function = quadweight, multiple_descent = true)
 
 true_filtered = _perform_kalman(Y, A, H, m0, P, Q, R)
 # true_filtered = _kalman(Y, A, H, Q, R, m0, P)
@@ -147,26 +158,45 @@ sum((a_gem1 .- A) .^ 2)
 # sum((A_init .- A).^2)
 
 G = SimpleWeightedDiGraph(A)
+_GTG = SimpleWeightedDiGraph(A)
 
-wm = Matrix(weights(G))
+function colour_edges(truth, est, truecol, falsecol)
+    n = 1
+    _ec_itr = [falsecol for _ in 1:ne(est)]
+    for _e in edges(est)
+        if has_edge(truth, src(_e), dst(_e))
+            _ec_itr[n] = truecol
+        end
+        n += 1
+    end
+    return _ec_itr
+end
+
+wm = Matrix(Graphs.weights(G))
 wv = vec(wm[wm.!=0.0])
 
-set_theme!(resolution = (300, 300))
+set_theme!(resolution = (200, 200))
 
 _ec = :turquoise3
 _nc = :lightblue3
+
+_true_e = edges(G)
+
+# _nwl = NetworkLayout.Spring(C = 6, seed = 14353)
+_nwl = NetworkLayout.SFDP(seed = 14353, C = 0.2, K = 1)
 
 f4, ax4, p4 = graphplot(
     G,
     nlabels = repr.(1:nv(G)),
     nlabels_align = (:center, :center),
-    layout = NetworkLayout.Spring(C = 5, seed = 14353),
+    layout = _nwl,
     arrow_size = 20,
     edge_width = 6 .* wv,
     node_size = 5 .* degree(G),
     curve_distance = 0.5,
     edge_color = _ec,
     node_color = _nc,
+    selfedge_size = 80
 )
 # offsets = 0.5 * (p[:node_pos][] .- p[:node_pos][][1])
 # offsets[1] = Point2f(0, 0.1)
@@ -181,20 +211,23 @@ f4
 
 G = SimpleWeightedDiGraph(a_gem1)
 
-wm = Matrix(weights(G))
+wm = Matrix(Graphs.weights(G))
 wv = vec(wm[wm.!=0.0])
+
+_ec_gem = colour_edges(_GTG, G, _ec, :red)
 
 f5, ax5, p5 = graphplot(
     G,
     nlabels = repr.(1:nv(G)),
     nlabels_align = (:center, :center),
-    layout = NetworkLayout.Spring(C = 5, seed = 14353),
+    layout = _nwl,
     arrow_size = 20,
     edge_width = 6 .* wv,
     node_size = 5 .* degree(G),
     curve_distance = 0.5,
-    edge_color = _ec,
+    edge_color = _ec_gem,
     node_color = _nc,
+    selfedge_size = 80
 )
 # offsets = 0.5 * (p[:node_pos][] .- p[:node_pos][][1])
 # offsets[1] = Point2f(0, 0.1)
@@ -209,20 +242,23 @@ f5
 
 G = SimpleWeightedDiGraph(a_gem_clstr[1][end])
 
-wm = Matrix(weights(G))
+_ec_cdkf = colour_edges(_GTG, G, _ec, :red)
+
+wm = Matrix(Graphs.weights(G))
 wv = vec(wm[wm.!=0.0])
 
 f6, ax6, p6 = graphplot(
     G,
     nlabels = repr.(1:nv(G)),
     nlabels_align = (:center, :center),
-    layout = NetworkLayout.Spring(C = 5, seed = 14353),
+    layout = _nwl,
     arrow_size = 20,
     edge_width = 6 .* wv,
     node_size = 5 .* degree(G),
     curve_distance = 0.5,
-    edge_color = _ec,
+    edge_color = _ec_cdkf,
     node_color = _nc,
+    selfedge_size = 80
 )
 # offsets = 0.5 * (p[:node_pos][] .- p[:node_pos][][1])
 # offsets[1] = Point2f(0, 0.1)
@@ -246,6 +282,33 @@ axislegend(ax_temp, merge = true, position = :lb)
 rowgap!(f7.layout, 1)
 f7
 
+G = SimpleWeightedDiGraph(a_gem_clstr[1][begin])
+
+_ec_cdkf = colour_edges(_GTG, G, _ec, :red)
+
+wm = Matrix(Graphs.weights(G))
+wv = vec(wm[wm.!=0.0])
+
+f8, ax8, p8 = graphplot(
+    G,
+    nlabels = repr.(1:nv(G)),
+    nlabels_align = (:center, :center),
+    layout = _nwl,
+    arrow_size = 20,
+    edge_width = 6 .* wv,
+    node_size = 5 .* degree(G),
+    curve_distance = 0.5,
+    edge_color = _ec_cdkf,
+    node_color = _nc,
+    selfedge_size = 80
+)
+
+offsets = [Point2(x, x) for x in 1 .* ones(nv(G))]
+# p6.nlabels_offset[] = offsets
+autolimits!(ax8)
+hidedecorations!(ax8);
+hidespines!(ax8);
+
 
 f
 f1
@@ -254,6 +317,9 @@ f2
 f4
 f5
 f6
+
+f8
+f7
 
 # save(plotsdir("states.pdf"), f7)
 # save(plotsdir("gt_graph.pdf"), f4)
@@ -271,3 +337,5 @@ println("CDKF")
 display(clst_gem_stats)
 
 lines(a_gem_clstr[2])
+
+f6

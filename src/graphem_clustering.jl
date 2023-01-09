@@ -86,6 +86,7 @@ function Stable_GraphEM_clustering(
     Σ₀;
     directed = true,
     pop_both = false,
+    pop_multiple = true,
     r = 20.0,
     init = _prox_stable(_create_adjacency_AR1(size(Q, 1), 0.1) .+ 0.1 .* randn(size(Q)), η),
     rand_reinit = true,
@@ -93,7 +94,8 @@ function Stable_GraphEM_clustering(
     Ei = 50,
     Mi = 1000,
     max_iters = 20,
-    pop_multiple = true,
+    weighting_function = identity,
+    multiple_descent = false
 )
     @info("----------------")
     @info("Block KF")
@@ -120,9 +122,10 @@ function Stable_GraphEM_clustering(
     new_estimate = initial_estimate
     dense_elements = findall(!=(0), initial_estimate)
     if directed
-        G = SimpleWeightedDiGraph(abs.(initial_estimate))
+        G = SimpleWeightedDiGraph(abs.(weighting_function(initial_estimate)))
     else
-        G = Graph(abs.(initial_estimate) .+ abs.(initial_estimate)')
+        G = Graph(abs.(weighting_function(initial_estimate)) .+ abs.(weighting_function(initial_estimate))')
+        pop_both = true
     end
     out_array = Vector{Matrix{Float64}}(undef, max_iters)
     out_array[1] = initial_estimate
@@ -135,43 +138,85 @@ function Stable_GraphEM_clustering(
         @info("Iteration $(c_iters)")
         # perform pseudo girvan newman clustering
         G, el = sever_largest_betweenness!(G, pop_multiple = pop_multiple)
-        @info("Removing element $(Tuple(el))")
-        for _el in el
-            pop_cart_from_edges!(_el[1], _el[2], dense_elements, both = pop_both)
-        end
-        if rand_reinit
-            # new_estimate = graphEM(dimA, steps, Y, H, m0, P, Q, R; γ = γ, dense_indices = dense_elements, θ = θ)
-            A0 = zeros(_state_dim, _state_dim)
-            A0[dense_elements] = _prox_stable(_create_adjacency_AR1(size(Q, 1), 0.1) .+ 0.1 .* randn(size(Q)), η)[dense_elements]
+        if multiple_descent && pop_multiple
+            @info("Comparing removal of element(s) $(Tuple(el))")
+            if rand_reinit
+                # new_estimate = graphEM(dimA, steps, Y, H, m0, P, Q, R; γ = γ, dense_indices = dense_elements, θ = θ)
+                A0 = zeros(_state_dim, _state_dim)
+                A0[dense_elements] = _prox_stable(_create_adjacency_AR1(size(Q, 1), 0.1) .+ 0.1 .* randn(size(Q)), η)[dense_elements]
+            else
+                # new_estimate = graphEM(dimA, steps, Y, H, m0, P, Q, R; γ = γ, dense_indices = dense_elements, θ = θ, init = new_estimate[dense_elements])
+                A0 = zeros(_state_dim, _state_dim)
+                A0[dense_elements] = new_estimate[dense_elements]
+            end
+            num_compare = length(el)
+            likes = zeros(num_compare)
+            estimates = zeros(num_compare, size(initial_estimate)...)
+            Threads.@threads for i in 1:num_compare
+                _cidxs = deepcopy(dense_elements)
+                pop_cart_from_edges!(el[i][1], el[i][2], _cidxs, both = pop_both)
+                estimates[i, :, :] = GraphEM_stable(
+                    y,
+                    H,
+                    Q,
+                    R,
+                    μ₀,
+                    Σ₀;
+                    λ = 0.33,
+                    γ = (0.66) * 0.99,
+                    η = 0.99,
+                    r = r,
+                    A₀ = A0,
+                    E_iterations = Ei,
+                    M_iterations = Mi,
+                    ϵ = ϵ,
+                    ξ = 1e-6,
+                    dense_indices = _cidxs,
+                )
+                likes[i] = _kalman(y, estimates[i, :, :], H, Q, R, μ₀, Σ₀; drop_priors = true, likelihood = true)[3]
+            end
+            to_remove = argmax(likes)
+            pop_cart_from_edges!(el[to_remove][1], el[to_remove][2], dense_elements, both = pop_both)
+            new_estimate = deepcopy(estimates[to_remove, :, :])
         else
-            # new_estimate = graphEM(dimA, steps, Y, H, m0, P, Q, R; γ = γ, dense_indices = dense_elements, θ = θ, init = new_estimate[dense_elements])
-            A0 = zeros(_state_dim, _state_dim)
-            A0[dense_elements] = new_estimate[dense_elements]
+            @info("Removing element(s) $(Tuple(el))")
+            for _el in el
+                pop_cart_from_edges!(_el[1], _el[2], dense_elements, both = pop_both)
+            end
+            if rand_reinit
+                # new_estimate = graphEM(dimA, steps, Y, H, m0, P, Q, R; γ = γ, dense_indices = dense_elements, θ = θ)
+                A0 = zeros(_state_dim, _state_dim)
+                A0[dense_elements] = _prox_stable(_create_adjacency_AR1(size(Q, 1), 0.1) .+ 0.1 .* randn(size(Q)), η)[dense_elements]
+            else
+                # new_estimate = graphEM(dimA, steps, Y, H, m0, P, Q, R; γ = γ, dense_indices = dense_elements, θ = θ, init = new_estimate[dense_elements])
+                A0 = zeros(_state_dim, _state_dim)
+                A0[dense_elements] = new_estimate[dense_elements]
+            end
+            new_estimate = GraphEM_stable(
+                y,
+                H,
+                Q,
+                R,
+                μ₀,
+                Σ₀;
+                λ = 0.33,
+                γ = (0.66) * 0.99,
+                η = 0.99,
+                r = r,
+                A₀ = A0,
+                E_iterations = Ei,
+                M_iterations = Mi,
+                ϵ = ϵ,
+                ξ = 1e-6,
+                dense_indices = dense_elements,
+            )
         end
-        new_estimate = GraphEM_stable(
-            y,
-            H,
-            Q,
-            R,
-            μ₀,
-            Σ₀;
-            λ = 0.33,
-            γ = (0.66) * 0.99,
-            η = 0.99,
-            r = r,
-            A₀ = A0,
-            E_iterations = Ei,
-            M_iterations = Mi,
-            ϵ = ϵ,
-            ξ = 1e-6,
-            dense_indices = dense_elements,
-        )
         out_array[c_iters+1] = new_estimate
         _ll[c_iters+1] = _kalman(y, new_estimate, H, Q, R, μ₀, Σ₀; drop_priors = true, likelihood = true)[3]
         if directed
-            G = SimpleWeightedDiGraph(abs.(new_estimate))
+            G = SimpleWeightedDiGraph(abs.(weighting_function(new_estimate)))
         else
-            G = Graph(abs.(new_estimate) .+ abs.(new_estimate)')
+            G = Graph(abs.(weighting_function(new_estimate)) .+ abs.(weighting_function(new_estimate))')
         end
         n_clusters = length(weakly_connected_components(G))
         @info("Now have $(n_clusters) clusters")
