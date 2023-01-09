@@ -57,9 +57,9 @@ function sever_largest_betweenness!(G; pop_multiple = true)
     if pop_multiple
         for _am in _amv
             rem_edge!(G, _am[1], _am[2])
-        # if has_edge(G, _am[2], _am[1])
+            # if has_edge(G, _am[2], _am[1])
             # rem_edge!(G, _am[2], _am[1])
-        # end
+            # end
         end
         return (G, _amv)
     else
@@ -95,7 +95,7 @@ function Stable_GraphEM_clustering(
     Mi = 1000,
     max_iters = 20,
     weighting_function = identity,
-    multiple_descent = false
+    multiple_descent = false,
 )
     @info("----------------")
     @info("Block KF")
@@ -143,7 +143,8 @@ function Stable_GraphEM_clustering(
             if rand_reinit
                 # new_estimate = graphEM(dimA, steps, Y, H, m0, P, Q, R; γ = γ, dense_indices = dense_elements, θ = θ)
                 A0 = zeros(_state_dim, _state_dim)
-                A0[dense_elements] = _prox_stable(_create_adjacency_AR1(size(Q, 1), 0.1) .+ 0.1 .* randn(size(Q)), η)[dense_elements]
+                A0[dense_elements] =
+                    _prox_stable(_create_adjacency_AR1(size(Q, 1), 0.1) .+ 0.1 .* randn(size(Q)), η)[dense_elements]
             else
                 # new_estimate = graphEM(dimA, steps, Y, H, m0, P, Q, R; γ = γ, dense_indices = dense_elements, θ = θ, init = new_estimate[dense_elements])
                 A0 = zeros(_state_dim, _state_dim)
@@ -152,7 +153,7 @@ function Stable_GraphEM_clustering(
             num_compare = length(el)
             likes = zeros(num_compare)
             estimates = zeros(num_compare, size(initial_estimate)...)
-            Threads.@threads for i in 1:num_compare
+            Threads.@threads for i = 1:num_compare
                 _cidxs = deepcopy(dense_elements)
                 pop_cart_from_edges!(el[i][1], el[i][2], _cidxs, both = pop_both)
                 estimates[i, :, :] = GraphEM_stable(
@@ -174,6 +175,8 @@ function Stable_GraphEM_clustering(
                     dense_indices = _cidxs,
                 )
                 likes[i] = _kalman(y, estimates[i, :, :], H, Q, R, μ₀, Σ₀; drop_priors = true, likelihood = true)[3]
+                @info("After removing $(el[i])")
+                @info("-------")
             end
             to_remove = argmax(likes)
             pop_cart_from_edges!(el[to_remove][1], el[to_remove][2], dense_elements, both = pop_both)
@@ -186,7 +189,8 @@ function Stable_GraphEM_clustering(
             if rand_reinit
                 # new_estimate = graphEM(dimA, steps, Y, H, m0, P, Q, R; γ = γ, dense_indices = dense_elements, θ = θ)
                 A0 = zeros(_state_dim, _state_dim)
-                A0[dense_elements] = _prox_stable(_create_adjacency_AR1(size(Q, 1), 0.1) .+ 0.1 .* randn(size(Q)), η)[dense_elements]
+                A0[dense_elements] =
+                    _prox_stable(_create_adjacency_AR1(size(Q, 1), 0.1) .+ 0.1 .* randn(size(Q)), η)[dense_elements]
             else
                 # new_estimate = graphEM(dimA, steps, Y, H, m0, P, Q, R; γ = γ, dense_indices = dense_elements, θ = θ, init = new_estimate[dense_elements])
                 A0 = zeros(_state_dim, _state_dim)
@@ -233,7 +237,7 @@ end
 
 function matrix_rmse(est_matrix, true_matrix)
     E = true_matrix .- est_matrix
-    SQE = E.^2
+    SQE = E .^ 2
     MSE = mean(SQE)
     RMSE = sqrt(MSE)
     return RMSE
