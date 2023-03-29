@@ -134,11 +134,12 @@ function _prox_f1(A, ϑ, Q, RTSS)
 end
 
 function _laplace(A, r)
-    return r .* sum(abs.(A))
+    # return r .* sum(abs.(A))
+    return sum(r .* abs.(A))
 end
 
 function _prox_laplace(A, r, γ)
-    α = r * γ
+    α = r .* γ
     return sign.(A) .* max.(abs.(A) .- α, 0.0)
 end
 

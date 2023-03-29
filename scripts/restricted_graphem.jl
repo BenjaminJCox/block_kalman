@@ -17,7 +17,7 @@ Random.seed!(0xabcdefabcdef)
 _blocksize = 2
 # _Mn = MatrixNormal(zeros(_blocksize, _blocksize), Matrix(1.0 * I(_blocksize)), Matrix(1.0 * I(_blocksize)))
 # A_blocks = [_create_adjacency_AR1(_blocksize, 0.1) for _ = 1:8]
-A_blocks = [rand(_blocksize, _blocksize) .+ 2.0 for _ = 1:5]
+A_blocks = [rand(_blocksize, _blocksize) .+ 2.0 for _ = 1:4]
 A = BlockDiagonal(A_blocks)
 A = Matrix(A)
 a_dim = size(A,1)
@@ -33,7 +33,7 @@ P = Matrix(1e-8 .* I(a_dim))
 
 m0 = ones(a_dim)
 
-T = 200
+T = 100
 
 X = zeros(a_dim, T)
 Y = zeros(a_dim, T)
@@ -86,6 +86,14 @@ A_init = (A_init + A_init') / 2
 
 a_gem1 = GraphEM_stable(Y, H, Q, R, m0, P, r = 25, λ = 0.99 / 3)
 
+display(a_gem1)
+
+_R = zeros(a_dim, a_dim)
+_R .+= 25.0
+# _R .+= diagm([500.0 for x in 1:a_dim])
+
+a_gem2 = GraphEM_stable(Y, H, Q, R, m0, P, r = _R, λ = 0.99 / 3)
+
 okalm_n = _kalman(Y, A, H, Q, R, m0, P, likelihood = true)
 okalm_o = _perform_kalman(Y, A, H, m0, P, Q, R, lle = true)
 
@@ -114,7 +122,7 @@ function pmw_m(x)
 end
 
 qmw(x) = qmw_e.(x, mean(x), 1)
-a_gem_clstr = Stable_GraphEM_clustering(5, Y, H, Q, R, m0, P, rand_reinit = true, r = 25, directed = true, pop_multiple = true, weighting_function = identity, multiple_descent = true)
+a_gem_clstr = Stable_GraphEM_clustering(4, Y, H, Q, R, m0, P, rand_reinit = true, r = 25, directed = true, pop_multiple = true, weighting_function = identity, multiple_descent = true)
 
 true_filtered = _perform_kalman(Y, A, H, m0, P, Q, R)
 # true_filtered = _kalman(Y, A, H, Q, R, m0, P)
