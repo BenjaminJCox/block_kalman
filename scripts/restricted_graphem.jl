@@ -3,6 +3,7 @@ using Distributions, Random, LinearAlgebra, BlockDiagonals
 using InvertedIndices
 using CairoMakie
 using GraphMakie, NetworkLayout
+using BenchmarkTools
 # using MAT
 
 include(srcdir("linear_filter_smoother.jl"))
@@ -23,12 +24,19 @@ A = Matrix(A)
 a_dim = size(A,1)
 A ./= 1 .* eigmax(A)
 
-qr_mult = 1
+qr_mult = 1.0
 Q = Matrix(qr_mult .* I(a_dim))
-R = Matrix(qr_mult .* I(a_dim))
+# Q .+= 0.000001
+# R = Matrix(qr_mult .* I(a_dim))
 # Q = Matrix(1e-2 .* I(a_dim))
-# R = Matrix(1e-2 .* I(a_dim))
+R = Matrix(1e-2 .* I(a_dim))
 H = Matrix(1.0 .* I(a_dim))
+# R = Matrix(qr_mult .* I(4))
+# H = 1.0 .* [1 1 0 0 0 0 0 0; 0 0 1 1 0 0 0 0; 0 0 0 0 1 1 0 0; 0 0 0 0 0 0 1 1]
+
+o_dim = size(H, 1)
+
+
 P = Matrix(1e-8 .* I(a_dim))
 
 m0 = ones(a_dim)
@@ -36,7 +44,7 @@ m0 = ones(a_dim)
 T = 100
 
 X = zeros(a_dim, T)
-Y = zeros(a_dim, T)
+Y = zeros(o_dim, T)
 
 prs_noise = MvNormal(Q)
 obs_noise = MvNormal(R)
@@ -52,50 +60,40 @@ for t = 1:T
     end
 end
 
-# matwrite("bentest.mat", Dict("gt" => Matrix(transpose(X)), "D1" => A, "ob" => Matrix(transpose(Y))))
+okalm_n = _kalman(Y, A, H, Q, R, m0, P, likelihood = true)
+okalm_n_s = _static_kalman(SMatrix{o_dim, T}(Y), SMatrix{a_dim, a_dim}(A), SMatrix{o_dim, a_dim}(H), SMatrix{a_dim, a_dim}(Q), SMatrix{o_dim, o_dim}(R), SVector{a_dim}(m0),  SMatrix{a_dim, a_dim}(P), likelihood = true)
+@profiler for i = 1:100
+    okalm_n = _kalman(Y, A, H, Q, R, m0, P, likelihood = true)
+end
+@profiler for i = 1:10000
+    okalm_n_s = _static_kalman(SMatrix{o_dim, T}(Y), SMatrix{a_dim, a_dim}(A), SMatrix{o_dim, a_dim}(H), SMatrix{a_dim, a_dim}(Q), SMatrix{o_dim, o_dim}(R), SVector{a_dim}(m0),  SMatrix{a_dim, a_dim}(P), likelihood = true)
+end
 
-# dinds = CartesianIndices(A)
+@info("DYNAMIC")
+@btime okalm_n = _kalman(Y, A, H, Q, R, m0, P, likelihood = true)
+@info("NAIVE STATIC")
+@btime okalm_n_s = _static_kalman(SMatrix{o_dim, T}(Y), SMatrix{a_dim, a_dim}(A), SMatrix{o_dim, a_dim}(H), SMatrix{a_dim, a_dim}(Q), SMatrix{o_dim, o_dim}(R), SVector{a_dim}(m0),  SMatrix{a_dim, a_dim}(P), likelihood = true)
 
 # γ = exp(0.25)
 γ = 0.1
 η = 0.01
 
+r = 35
+
 # A_init = MLEM_A(a_dim, 25, Y, H, m0, P, Q, R)
 A_init = rand(a_dim, a_dim)
 A_init = (A_init + A_init') / 2
 
-# f_list = [x -> _spec(x, 0.99), x -> η .* _laplace(x)]
-# f_list = [x -> η .* _laplace(x)]
-#
-# # p_list = [(x,y) -> proj_spec(x, 0.99), (x,y) -> prox_laplace(x, η * y)]
-# p_list = [(x,y) -> prox_laplace(x, η * y)]
-
-# a_gem1 = graphEM_MS(
-#     a_dim,
-#     30,
-#     Y,
-#     H,
-#     m0,
-#     P,
-#     Q,
-#     R,
-#     0.9 / 2;
-#     f_list = f_list,
-#     p_list = p_list,
-# ); display(a_gem1)
-
-a_gem1 = GraphEM_stable(Y, H, Q, R, m0, P, r = 25, λ = 0.99 / 3)
+a_gem1 = GraphEM_stable(Y, H, Q, R, m0, P, r = r, λ = 0.99 / 3)
 
 display(a_gem1)
 
-_R = zeros(a_dim, a_dim)
-_R .+= 25.0
-# _R .+= diagm([500.0 for x in 1:a_dim])
-
-a_gem2 = GraphEM_stable(Y, H, Q, R, m0, P, r = _R, λ = 0.99 / 3)
-
-okalm_n = _kalman(Y, A, H, Q, R, m0, P, likelihood = true)
-okalm_o = _perform_kalman(Y, A, H, m0, P, Q, R, lle = true)
+# _R = zeros(a_dim, a_dim)
+# _R .+= r
+# _R[diagind(_R)] .*= 0.8
+# a_gem2 = GraphEM_stable(Y, H, Q, R, m0, P, r = _R, λ = 0.99 / 3)
+# display(a_gem2)
+# @btime okalm_o = _perform_kalman(Y, A, H, m0, P, Q, R, lle = true)
 
 
 # a_gem = graphEM(a_dim, 50, Y, H, m0, P, Q, R, γ = γ, θ = 1.0, init = vec(A_init)); display(a_gem)
@@ -122,7 +120,7 @@ function pmw_m(x)
 end
 
 qmw(x) = qmw_e.(x, mean(x), 1)
-a_gem_clstr = Stable_GraphEM_clustering(4, Y, H, Q, R, m0, P, rand_reinit = true, r = 25, directed = true, pop_multiple = true, weighting_function = identity, multiple_descent = true)
+a_gem_clstr = Stable_GraphEM_clustering(4, Y, H, Q, R, m0, P, rand_reinit = true, r = r, directed = true, pop_multiple = true, weighting_function = identity, multiple_descent = true)
 
 true_filtered = _perform_kalman(Y, A, H, m0, P, Q, R)
 # true_filtered = _kalman(Y, A, H, Q, R, m0, P)

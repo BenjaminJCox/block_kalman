@@ -2,10 +2,95 @@ using LinearAlgebra
 using OffsetArrays #no need to make things complicated!
 using Kronecker
 using Distributions
+using MatrixEquations
+using StaticArrays
+using StatsFuns
+using PDMats
+
+function _closest_pd!(X::Matrix{Float64})
+    X .*= 0.5
+    X .+= transpose(X)
+    D_v, Q = eigen(X)
+    D_v .= max.(D_v, 0.0)
+    return Q * diagm(D_v) * Q'
+end
+
+function _MVNLL(μ, Σ, x)
+    k = length(μ)
+    ldcd = logdet(Σ)
+    _t1 = -(k * log2π + ldcd) / 2.
+    _t2 = invquad(Σ, x .- μ) / 2.
+    return _t1 .- _t2
+end
 
 function _kalman(y, A, H, Q, R, μ₀, Σ₀; drop_priors = true, likelihood = false)
     K = size(y, 2)
     _state_dim = size(A, 1)
+    _obs_dim = size(y, 1)
+    _d = _state_dim
+    _o = _obs_dim
+    μ = OffsetArray(Matrix{Float64}(undef, _state_dim, K + 1), OffsetArrays.Origin(1, 0))
+    Σ = OffsetArray(Array{Float64}(undef, _state_dim, _state_dim, K + 1), OffsetArrays.Origin(1, 1, 0))
+
+    μ[:, 0] .= μ₀
+    Σ[:, :, 0] .= Σ₀
+
+    if likelihood
+        ll_est = 0.0
+    end
+
+    # preallocate
+    μₖ = zeros(_d)
+    Σₖ = zeros(_d, _d)
+
+    vₖ = zeros(_o)
+    Sₖ = zeros(_o, _o)
+    Kₖ = zeros(_o, _d)
+
+    # @info(μₖ, Σₖ, vₖ, νₖt, Sₖ, Kₖ)
+
+    for k = 1:K
+        # prediction
+        @views μₖ .= A * μ[:, k-1]
+        @views Σₖ .= A * Σ[:, :, k-1] * transpose(A) .+ Q
+
+        # updating
+        @views vₖ .= y[:, k] .- H * μₖ #v
+        Sₖ .= H * Σₖ * transpose(H) .+ R
+        Sₖ .*= 0.5
+        Sₖ .+= transpose(Sₖ)
+        Kₖ .= Σₖ * transpose(H) * inv(Sₖ)
+
+        μ[:, k] .= μₖ .+ Kₖ * vₖ
+        Σ[:, :, k] .= Σₖ .- Kₖ * Sₖ * transpose(Kₖ)
+
+        if likelihood
+            Sₖ .*= 0.5
+            Sₖ .+= transpose(Sₖ)
+            @views ll_est += logpdf(MvNormal(H * μₖ, Sₖ), y[:, k])
+        end
+    end
+
+    if drop_priors
+        # for general use
+        if likelihood
+            @views return (Matrix(μ[:, 1:end]), Array(Σ[:, :, 1:end]), ll_est)
+        else
+            @views return (Matrix(μ[:, 1:end]), Array(Σ[:, :, 1:end]))
+        end
+    else
+        # use with RTS smoother
+        return (μ, Σ)
+    end
+end
+
+function _static_kalman(y, A, H, Q, R, μ₀, Σ₀; drop_priors = true, likelihood = false)
+    K = size(y, 2)
+    _state_dim = size(A, 1)
+    _obs_dim = size(y, 1)
+    _d = _state_dim
+    _o = _obs_dim
+
     μ = OffsetArray(Matrix{Float64}(undef, _state_dim, K + 1), OffsetArrays.Origin(1, 0))
     Σ = OffsetArray(Array{Float64}(undef, _state_dim, _state_dim, K + 1), OffsetArrays.Origin(1, 1, 0))
 
@@ -16,22 +101,23 @@ function _kalman(y, A, H, Q, R, μ₀, Σ₀; drop_priors = true, likelihood = f
         ll_est = 0.0
     end
 
+
     for k = 1:K
         # prediction
-        μₖ = A * μ[:, k-1]
-        Σₖ = A * Σ[:, :, k-1] * transpose(A) + Q
+        μₖ = SVector{_d}(A * SVector{_d}(μ[:, k-1]))
+        @views Σₖ = SMatrix{_d, _d}(A * SMatrix{_d, _d}(Σ[:, :, k-1]) * transpose(A) .+ Q)
 
         # updating
-        νₖ = H * μₖ #\nu
-        vₖ = y[:, k] - νₖ #v
-        Sₖ = H * Σₖ * transpose(H) + R
-        Kₖ = Σₖ * transpose(H) * inv(Sₖ)
+        # νₖ = H * μₖ #\nu
+        @views vₖ = SVector{_o}(y[:, k] .- H * μₖ) #v)
+        Sₖ = SMatrix{_o, _o}(H * Σₖ * transpose(H) .+ R)
+        Kₖ = SMatrix{_d, _o}(Sₖ \ Σₖ * transpose(H))
 
-        μ[:, k] = μₖ + Kₖ * vₖ
-        Σ[:, :, k] = Σₖ - Kₖ * Sₖ * transpose(Kₖ)
+        μ[:, k] .= μₖ .+ Kₖ * vₖ
+        Σ[:, :, k] .= Σₖ .- Kₖ * Sₖ * transpose(Kₖ)
 
         if likelihood
-            ll_est += logpdf(MvNormal(H * μₖ, 0.5 .* (Sₖ .+ transpose(Sₖ))), y[:, k])
+            @views ll_est += logpdf(MvNormal(H * μₖ, 0.5 .* Matrix(Sₖ .+ transpose(Sₖ))), y[:, k])
         end
     end
 
@@ -86,12 +172,9 @@ function _ΨΔΦ(RTSS)
 
     for k = 1:K
         Ψ .+= parent(Σ[:, :, k] .+ μ[:, k] * μ[:, k]')
-        Δ .+= parent(Σ[:, :, k] * G[:, :, k-1] .+ μ[:, k] * μ[:, k-1]')
+        Δ .+= parent(Σ[:, :, k] * G[:, :, k-1]' .+ μ[:, k] * μ[:, k-1]')
         Φ .+= parent(Σ[:, :, k-1] .+ μ[:, k-1] * μ[:, k-1]')
     end
-    Φ ./= K
-    Δ ./= K
-    Ψ ./= K
     return (Ψ, Δ, Φ)
 end
 
@@ -107,30 +190,34 @@ allequal(x) = all(y -> y == x[1], x)
 function _prox_f1(A, ϑ, Q, RTSS)
     Ψ, Δ, Φ = RTSS[4]
     K = size(RTSS[1], 2) - 1
-    # return sylvester(ϑ * inv(Q), inv(Φ), -(A * inv(Φ) + ϑ * inv(Q) * Δ * inv(Φ)))
-
-    #
-    # Q_inv = inv(Q)
-    # Φ_inv = inv(Φ)
-    #
+    Q_inv = inv(Q)
+    Φ_inv = inv(Φ)
     C = Δ
 
     if isdiag(Q) && allequal(diag(Q))
-        temp = ϑ * K / (Q[1]^2)
-        # @info("diag shortcut")
-        return (temp * C + A) * pinv(Φ * temp + Matrix(I(size(Q, 1))))
+        _sigma2 = Q[1]
+        _t1 = (ϑ ./ _sigma2) .* Δ + A
+        _t2 = (ϑ ./ _sigma2) .* Φ + I(size(A, 1))
+        return _t1 * inv(_t2)
     end
+    _rv = sylvc(ϑ .* Q_inv, Φ_inv, A * Φ_inv + ϑ .* Q_inv * Δ * Φ_inv)
+    return _rv
 
-    # return sylvester(K * inv(Q), ϑ * inv(Φ), -(K * inv(Q) * Δ * inv(Φ)))
+end
 
-    # id = 1.0 .* Matrix(I(size(Q, 1)))
-    #
-    # _t1 = id ⊗ (K * Q_inv) .+ (ϑ * Φ_inv) ⊗ id
-    # _t2 = vec(K * Q_inv * C * Φ_inv)
-    # rv = inv(_t1) * _t2
-    # # @info("doody")
-    # # rvl = isqrt(length(rv))
-    # return reshape(rv, size(A))
+function _prox_f1_diag(A, ϑ, Q, RTSS)
+    Ψ, Δ, Φ = RTSS[4]
+    K = size(RTSS[1], 2) - 1
+    Q_inv = inv(Q)
+    Φ_inv = inv(Φ)
+    C = Δ
+
+    if isdiag(Q) && allequal(diag(Q))
+        _sigma2 = Q[1]
+        _t1 = (ϑ ./ _sigma2) .* Δ + A
+        _t2 = (ϑ ./ _sigma2) .* Φ + I(size(A, 1))
+        return _t1 * inv(_t2)
+    end
 end
 
 function _laplace(A, r)
@@ -158,7 +245,7 @@ function _create_adjacency_AR1(N, ρ)
     return A
 end
 
-function _MS_l1_stab(A, Q, _RTSS; γ = 0.663, η = 0.99, r = 0.01, MS_iterations = 1000, ξ = 1e-4, dense_indices = eachindex(A))
+function _MS_l1_stab_old(A, Q, _RTSS; γ = 0.663, η = 0.99, r = 0.01, MS_iterations = 1000, ξ = 1e-4, dense_indices = eachindex(A))
     # X = V1 = V2 = P1 = P1p = A
     X = copy(A)
 
@@ -185,16 +272,16 @@ function _MS_l1_stab(A, Q, _RTSS; γ = 0.663, η = 0.99, r = 0.01, MS_iterations
         Y21[dense_indices] = V1[dense_indices] .+ γ .* X[dense_indices]
         Y22[dense_indices] = V2[dense_indices] .+ γ .* X[dense_indices]
 
-        # P1p = _prox_laplace(Y1, γ, r)
-        # if iter > 1
-        #     if objective(P1, _prox_laplace(Y1, γ, r)) <= ξ
-        #         @info("MS converged in $(iter) iterations")
-        #         return _prox_laplace(Y1, γ, r)
-        #     end
-        # end
+        P1p[dense_indices] = _prox_laplace(Y1, γ, r)[dense_indices]
+        if iter > 1
+            if objective(P1, P1p) <= ξ
+                @info("MS converged in $(iter) iterations")
+                return P1p
+            end
+        end
         #
-        # P1 = copy(P1p)
-        P1[dense_indices] = _prox_laplace(Y1, γ, r)[dense_indices]
+        P1[dense_indices] .= P1p[dense_indices]
+        # P1[dense_indices] = _prox_laplace(Y1, r, γ)[dense_indices]
 
         P21[dense_indices] = Y21[dense_indices] .- γ .* _prox_f1(Y21 ./ γ, 1 / γ, Q, _RTSS)[dense_indices]
         P22[dense_indices] = Y22[dense_indices] .- γ .* _prox_stable(Y22 ./ γ, η)[dense_indices]
@@ -209,6 +296,50 @@ function _MS_l1_stab(A, Q, _RTSS; γ = 0.663, η = 0.99, r = 0.01, MS_iterations
     end
     # @warn("MS did not converge before $(MS_iterations) iterations")
     return P1
+end
+
+function _MS_l1_stab(A, Q, _RTSS; γ = 0.663, η = 0.99, r = 0.01, MS_iterations = 1000, ξ = 1e-4, dense_indices = eachindex(A))
+
+    # _3 is the special term
+    W1 = deepcopy(A)
+    W2 = deepcopy(A)
+    W3 = deepcopy(A)
+
+    A1 = deepcopy(A)
+    A2 = deepcopy(A)
+    A3 = deepcopy(A)
+
+    Z1 = deepcopy(A)
+    Z2 = deepcopy(A)
+    Z3 = deepcopy(A)
+
+    V1 = deepcopy(A)
+    V2 = deepcopy(A)
+    V3 = deepcopy(A)
+
+    # Ψ, Δ, Φ = _RTSS
+    @inline majorant(M) = _f1(M, Q, _RTSS) .+ _laplace(M, r)
+    @inline objective(A1, A2) = abs(majorant(A1) .- majorant(A2))
+    for iter = 1:MS_iterations
+
+        W1[dense_indices] .= V1[dense_indices] .+ γ .* V3[dense_indices]
+        W2[dense_indices] .= V2[dense_indices] .+ γ .* V3[dense_indices]
+        W3[dense_indices] .= V3[dense_indices] .- γ .* (V1[dense_indices] .+ V2[dense_indices])
+
+        A1[dense_indices] .= W1[dense_indices] .- γ .* _prox_f1(W1, 1 ./ γ, Q, _RTSS)[dense_indices]
+        A2[dense_indices] .= W2[dense_indices] .- γ .* _prox_stable(W2, η)[dense_indices]
+        A3[dense_indices] .= _prox_laplace(W3, γ, r)[dense_indices]
+
+        Z1[dense_indices] .= A1[dense_indices] .+ γ .* A3[dense_indices]
+        Z2[dense_indices] .= A2[dense_indices] .+ γ .* A3[dense_indices]
+        Z3[dense_indices] .= A3[dense_indices] .- γ .* (A1[dense_indices] .+ A2[dense_indices])
+
+        V1[dense_indices] .= V1[dense_indices] .- W1[dense_indices] .+ Z1[dense_indices]
+        V2[dense_indices] .= V2[dense_indices] .- W2[dense_indices] .+ Z2[dense_indices]
+        V3[dense_indices] .= V3[dense_indices] .- W3[dense_indices] .+ Z3[dense_indices]
+    end
+    # @warn("MS did not converge before $(MS_iterations) iterations")
+    return A3
 end
 
 function _MS_l1(A, Q, _RTSS; γ = 0.505, r = 0.01, MS_iterations = 1000, ξ = 1e-4)
@@ -284,7 +415,7 @@ function GraphEM_stable(
     λ = 0.33,
     γ = (1 - λ) * 0.99,
     η = 0.99,
-    r = 2.0,
+    r = 0.1,
     A₀ = _prox_stable(_create_adjacency_AR1(size(Q, 1), 0.1) .+ 0 .* randn(size(Q)), η),
     E_iterations = 50,
     M_iterations = 1000,
@@ -325,5 +456,7 @@ function GraphEM_stable(
         # @info(A)
     end
     @warn("GraphEM did not converge after $(E_iterations) EM iterations")
-    return A
+    _ll = _kalman(y, Ap, H, Q, R, μ₀, Σ₀; drop_priors = true, likelihood = true)[3]
+    @info("Log-likelihood of estimate is $(_ll)")
+    return Ap
 end

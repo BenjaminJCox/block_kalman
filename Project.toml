@@ -2,6 +2,7 @@ name = "block_kalman"
 authors = ["Benjamin Cox"]
 
 [deps]
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 BlockDiagonals = "0a1fb500-61f7-11e9-3c65-f5ef3456f9f0"
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 Clustering = "aaaa29a8-35af-508c-8bc3-b662a17a0fe5"
@@ -18,7 +19,10 @@ MLBase = "f0e99cf1-93fa-52ec-9ecc-5026115318e0"
 MatrixEquations = "99c1a7ee-ab34-5fd5-8076-27c950a045f4"
 NetworkLayout = "46757867-2c16-5918-afeb-47bfcb05e46a"
 OffsetArrays = "6fe1bfb0-de20-5000-8ca7-80f57d26f881"
+PDMats = "90014a1f-27ba-587c-ab20-58faa44d9150"
 SimpleWeightedGraphs = "47aef6b3-ad0c-573a-a1e2-d07658019622"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+StatsFuns = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
 
 [compat]
 DrWatson = "2.9.1"

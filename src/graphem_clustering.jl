@@ -45,6 +45,7 @@ function determine_edge_betweenness(G)
             end
         end
     end
+    display(betweenness_matrix)
     return betweenness_matrix
 end
 
