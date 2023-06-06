@@ -45,7 +45,7 @@ function determine_edge_betweenness(G)
             end
         end
     end
-    display(betweenness_matrix)
+    # display(betweenness_matrix)
     return betweenness_matrix
 end
 
@@ -176,8 +176,7 @@ function Stable_GraphEM_clustering(
                     dense_indices = _cidxs,
                 )
                 likes[i] = _kalman(y, estimates[i, :, :], H, Q, R, μ₀, Σ₀; drop_priors = true, likelihood = true)[3]
-                @info("After removing $(el[i])")
-                @info("-------")
+                @info("ll = $(likes[i]) after removing $(el[i])")
             end
             to_remove = argmax(likes)
             @info("-------")
@@ -226,6 +225,7 @@ function Stable_GraphEM_clustering(
         else
             G = Graph(abs.(weighting_function(new_estimate)) .+ abs.(weighting_function(new_estimate))')
         end
+        display(new_estimate)
         n_clusters = length(weakly_connected_components(G))
         @info("Now have $(n_clusters) clusters")
         c_iters += 1

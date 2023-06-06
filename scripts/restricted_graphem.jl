@@ -11,6 +11,8 @@ include(srcdir("graphem_prereq.jl"))
 include(srcdir("graphem_clustering.jl"))
 include(srcdir("rw_tools.jl"))
 
+include(srcdir("gen_graphem_clustering.jl"))
+
 
 Random.seed!(0xabcdefabcdef)
 
@@ -60,19 +62,19 @@ for t = 1:T
     end
 end
 
-okalm_n = _kalman(Y, A, H, Q, R, m0, P, likelihood = true)
-okalm_n_s = _static_kalman(SMatrix{o_dim, T}(Y), SMatrix{a_dim, a_dim}(A), SMatrix{o_dim, a_dim}(H), SMatrix{a_dim, a_dim}(Q), SMatrix{o_dim, o_dim}(R), SVector{a_dim}(m0),  SMatrix{a_dim, a_dim}(P), likelihood = true)
-@profiler for i = 1:100
-    okalm_n = _kalman(Y, A, H, Q, R, m0, P, likelihood = true)
-end
-@profiler for i = 1:10000
-    okalm_n_s = _static_kalman(SMatrix{o_dim, T}(Y), SMatrix{a_dim, a_dim}(A), SMatrix{o_dim, a_dim}(H), SMatrix{a_dim, a_dim}(Q), SMatrix{o_dim, o_dim}(R), SVector{a_dim}(m0),  SMatrix{a_dim, a_dim}(P), likelihood = true)
-end
+okalm_n = _kalman(Y, A, H, Q, R, m0, P, likelihood = true);
+# okalm_n_s = _static_kalman(SMatrix{o_dim, T}(Y), SMatrix{a_dim, a_dim}(A), SMatrix{o_dim, a_dim}(H), SMatrix{a_dim, a_dim}(Q), SMatrix{o_dim, o_dim}(R), SVector{a_dim}(m0),  SMatrix{a_dim, a_dim}(P), likelihood = true);
+# @profiler for i = 1:100
+#     okalm_n = _kalman(Y, A, H, Q, R, m0, P, likelihood = true)
+# end
+# @profview for i = 1:1000
+#     okalm_n_s = _static_kalman(SMatrix{o_dim, T}(Y), SMatrix{a_dim, a_dim}(A), SMatrix{o_dim, a_dim}(H), SMatrix{a_dim, a_dim}(Q), SMatrix{o_dim, o_dim}(R), SVector{a_dim}(m0),  SMatrix{a_dim, a_dim}(P), likelihood = true)
+# end
 
-@info("DYNAMIC")
-@btime okalm_n = _kalman(Y, A, H, Q, R, m0, P, likelihood = true)
-@info("NAIVE STATIC")
-@btime okalm_n_s = _static_kalman(SMatrix{o_dim, T}(Y), SMatrix{a_dim, a_dim}(A), SMatrix{o_dim, a_dim}(H), SMatrix{a_dim, a_dim}(Q), SMatrix{o_dim, o_dim}(R), SVector{a_dim}(m0),  SMatrix{a_dim, a_dim}(P), likelihood = true)
+# @info("DYNAMIC")
+# @btime okalm_n = _kalman(Y, A, H, Q, R, m0, P, likelihood = true);
+# @info("NAIVE STATIC")
+# @btime okalm_n_s = _static_kalman(SMatrix{o_dim, T}(Y), SMatrix{a_dim, a_dim}(A), SMatrix{o_dim, a_dim}(H), SMatrix{a_dim, a_dim}(Q), SMatrix{o_dim, o_dim}(R), SVector{a_dim}(m0),  SMatrix{a_dim, a_dim}(P), likelihood = true);
 
 # γ = exp(0.25)
 γ = 0.1
@@ -90,16 +92,26 @@ display(a_gem1)
 
 # _R = zeros(a_dim, a_dim)
 # _R .+= r
-# _R[diagind(_R)] .*= 0.8
+# _R[diagind(_R)] .*= Inf
 # a_gem2 = GraphEM_stable(Y, H, Q, R, m0, P, r = _R, λ = 0.99 / 3)
 # display(a_gem2)
 # @btime okalm_o = _perform_kalman(Y, A, H, m0, P, Q, R, lle = true)
+
+_R = zeros(a_dim, a_dim)
+_R .+= 30.
+
+_condition(G, M) = GN_condition(G)
+_effect(r, M) = modprior_effect(r, M, Inf)
+_stop(G, _O, _ll) = cluster_stop(G, 4)
+
+sgm_f = Stable_GraphEM_clustering_finputs(Y, H, Q, R, m0, P, _condition, _effect, _stop, rand_reinit = true, r = _R, weighting_function = identity, multiple_descent = true)
+display(sgm_f[1][end])
 
 
 # a_gem = graphEM(a_dim, 50, Y, H, m0, P, Q, R, γ = γ, θ = 1.0, init = vec(A_init)); display(a_gem)
 # a_gem_clstr = graphem_clustering(4, a_dim, 50, Y, H, m0, P, Q, R, γ = γ, θ = 1.0, directed = true, max_iters = 50, init = vec(A_init), rand_reinit = true)
 
-quadweight(x) = x .^ 2
+quadweight(x) = clamp.(x .^ 2, -1., 1.)
 function gmw_e(x, μ, σ)
     if x != 0
         x = 1 - exp(-0.5*(x/σ)^2)/σ
@@ -112,15 +124,20 @@ function pmw_e(x, γ)
         x = x .^ γ
     end
 end
-function pmw_m(x)
-    rv = pmw_e(x, 2)
-    rvext = extrema(rv)
-    rv = (rv .- rvext[1])./(rvext[2] - rvext[1])
+function pmw_m(x, ϵ = eps(Float64))
+    rv = copy(abs.(x))
+    _rvinds = rv .!= 0.0
+    rv_t = rv[_rvinds]
+    rvext = extrema(rv_t)
+    rv_t = (rv_t .- rvext[1])./(rvext[2] - rvext[1])
+    rv_t[rv_t .== 0.] .+= ϵ
+    rv[_rvinds] .= rv_t
     return rv
 end
 
 qmw(x) = qmw_e.(x, mean(x), 1)
-a_gem_clstr = Stable_GraphEM_clustering(4, Y, H, Q, R, m0, P, rand_reinit = true, r = r, directed = true, pop_multiple = true, weighting_function = identity, multiple_descent = true)
+a_gem_clstr = Stable_GraphEM_clustering(4, Y, H, Q, R, m0, P, rand_reinit = true, r = 30, directed = true, pop_multiple = true, weighting_function = identity, multiple_descent = true)
+display(a_gem_clstr[1][end])
 
 true_filtered = _perform_kalman(Y, A, H, m0, P, Q, R)
 # true_filtered = _kalman(Y, A, H, Q, R, m0, P)

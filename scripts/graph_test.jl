@@ -39,3 +39,14 @@ autolimits!(ax)
 hidedecorations!(ax); hidespines!(ax)
 ax.aspect = DataAspect()
 f
+
+G2 = DiGraph(A)
+f2, ax2, p2 = graphplot(G2,  nlabels=repr.(1:nv(G2)), nlabels_align=(:center,:center), layout = NetworkLayout.Spring(C = 10, seed = 14353), arrow_size = 20, node_size = 5 .* degree(G2), curve_distance = .5)
+# offsets = 0.5 * (p[:node_pos][] .- p[:node_pos][][1])
+# offsets[1] = Point2f(0, 0.1)
+offsets = [Point2(x,x) for x in 1 .* ones(nv(G2))]
+p2.nlabels_offset[] = offsets
+autolimits!(ax2)
+hidedecorations!(ax2); hidespines!(ax2)
+ax2.aspect = DataAspect()
+f2

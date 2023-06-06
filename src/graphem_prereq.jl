@@ -124,9 +124,9 @@ function _static_kalman(y, A, H, Q, R, μ₀, Σ₀; drop_priors = true, likelih
     if drop_priors
         # for general use
         if likelihood
-            return (Matrix(μ[:, 1:end]), Array(Σ[:, :, 1:end]), ll_est)
+            return @views (Matrix(μ[:, 1:end]), Array(Σ[:, :, 1:end]), ll_est)
         else
-            return (Matrix(μ[:, 1:end]), Array(Σ[:, :, 1:end]))
+            return @views (Matrix(μ[:, 1:end]), Array(Σ[:, :, 1:end]))
         end
     else
         # use with RTS smoother
@@ -424,6 +424,9 @@ function GraphEM_stable(
     dense_indices = eachindex(A₀),
 )
     # A = Ap = A₀
+    if isa(r, Matrix)
+        dense_indices = findall(r .!= Inf)
+    end
     A = copy(A₀)
     Ap = copy(A₀)
     A[Not(dense_indices)] .= 0.0
@@ -446,9 +449,9 @@ function GraphEM_stable(
         # Ap = _DR_l1(A, Q, RTSS_output; r = r, DR_iterations = M_iterations, ξ = ξ)
         if s > 1
             if norm(A .- Ap, 2) < ϵ * norm(A)
-                @info("GraphEM converged in $(s) EM iterations")
+                # @info("GraphEM converged in $(s) EM iterations")
                 _ll = _kalman(y, Ap, H, Q, R, μ₀, Σ₀; drop_priors = true, likelihood = true)[3]
-                @info("Log-likelihood of estimate is $(_ll)")
+                # @info("Log-likelihood of estimate is $(_ll)")
                 return Ap
             end
         end
@@ -457,6 +460,6 @@ function GraphEM_stable(
     end
     @warn("GraphEM did not converge after $(E_iterations) EM iterations")
     _ll = _kalman(y, Ap, H, Q, R, μ₀, Σ₀; drop_priors = true, likelihood = true)[3]
-    @info("Log-likelihood of estimate is $(_ll)")
+    # @info("Log-likelihood of estimate is $(_ll)")
     return Ap
 end
